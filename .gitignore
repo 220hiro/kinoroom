@@ -9,3 +9,4 @@ test-results/
 .sites-runtime/
 .open-next/
 .wrangler/
+scratch/

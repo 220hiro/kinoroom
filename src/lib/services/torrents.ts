@@ -22,11 +22,35 @@ export async function getWebTorrentClient() {
   return globalThis._webtorrentClient;
 }
 
-/**
- * Searches open trackers (Rutor / mirrors) for releases matching query
- */
-export async function searchTorrents(query: string): Promise<TorrentSearchResult[]> {
-  const clean = query.trim();
+export function cleanTorrentQuery(query: string): string {
+  return query
+    .replace(/\b(19\d\d|20\d\d)\b/g, '') // remove 4-digit release years that break sphinx search
+    .replace(/[:\-—–_()[\]{}«»"']/g, ' ')  // remove punctuation
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function detectTranslation(rawTitle: string): string | undefined {
+  if (/Red\s*Head\s*Sound|RHS/i.test(rawTitle)) return 'Red Head Sound';
+  if (/LostFilm|Лостфильм/i.test(rawTitle)) return 'LostFilm';
+  if (/HDRezka|Rezka|Резка/i.test(rawTitle)) return 'HDRezka';
+  if (/Кубик\s*в\s*Кубе/i.test(rawTitle)) return 'Кубик в кубе';
+  if (/Студийная\s*Банда|StudioBand/i.test(rawTitle)) return 'Студийная Банда';
+  if (/AniLibria|Анилибрия/i.test(rawTitle)) return 'AniLibria';
+  if (/AnimeVost|Анимевост/i.test(rawTitle)) return 'AnimeVost';
+  if (/NewStudio/i.test(rawTitle)) return 'NewStudio';
+  if (/AlexFilm/i.test(rawTitle)) return 'AlexFilm';
+  if (/TVShows/i.test(rawTitle)) return 'TVShows';
+  if (/Гоблин|Пучков/i.test(rawTitle)) return 'Гоблин (П/П)';
+  if (/(?:\|\s*|\[|\(|\b)(?:D|ДБ|Дубляж|Дублированный)(?:\s*\||\]|\)|\b)/i.test(rawTitle)) return 'Дубляж';
+  if (/(?:\|\s*|\[|\(|\b)(?:MVO|П|Многоголосый|Проф\.\s*многоголосый)(?:\s*\||\]|\)|\b)/i.test(rawTitle)) return 'Многоголосый';
+  if (/(?:\|\s*|\[|\(|\b)(?:AVO|Авторский|Одноголосый|А)(?:\s*\||\]|\)|\b)/i.test(rawTitle)) return 'Авторский';
+  if (/Субтитры|Subtitles|SoftSub/i.test(rawTitle)) return 'Субтитры';
+  return undefined;
+}
+
+async function fetchFromRutor(query: string): Promise<TorrentSearchResult[]> {
+  const clean = cleanTorrentQuery(query);
   if (!clean) return [];
 
   const mirrors = [
@@ -67,9 +91,12 @@ export async function searchTorrents(query: string): Promise<TorrentSearchResult
           // Extract quality
           let quality = 'HD';
           if (/2160p|4k|uhd/i.test(rawTitle)) quality = '4K UHD';
-          else if (/1080p|bdrip\s*1080/i.test(rawTitle)) quality = '1080p';
+          else if (/1080p|bdrip\s*1080|1080i/i.test(rawTitle)) quality = '1080p';
           else if (/720p/i.test(rawTitle)) quality = '720p';
           else if (/bdrip|dvdrip/i.test(rawTitle)) quality = 'BDRip';
+          else if (/web-dl|webrip/i.test(rawTitle)) quality = 'WEB-DL';
+
+          const translation = detectTranslation(rawTitle);
 
           results.push({
             title: rawTitle,
@@ -78,20 +105,49 @@ export async function searchTorrents(query: string): Promise<TorrentSearchResult
             seeds,
             peers,
             tracker: 'Rutor',
-            quality
+            quality,
+            translation
           });
         }
       }
 
       // Sort by seeders descending
       results.sort((a, b) => b.seeds - a.seeds);
-      return results.slice(0, 25);
+      return results;
     } catch {
       continue;
     }
   }
 
   return [];
+}
+
+/**
+ * Searches open trackers (Rutor / mirrors) for releases matching query
+ * If primary query returns no results, attempts search with originalTitle
+ */
+export async function searchTorrents(query: string, originalTitle?: string): Promise<TorrentSearchResult[]> {
+  let results = await fetchFromRutor(query);
+
+  if (results.length === 0 && originalTitle) {
+    const cleanOrig = cleanTorrentQuery(originalTitle);
+    const cleanPrim = cleanTorrentQuery(query);
+    if (cleanOrig && cleanOrig.toLowerCase() !== cleanPrim.toLowerCase()) {
+      results = await fetchFromRutor(originalTitle);
+    }
+  }
+
+  // Deduplicate by magnet link
+  const seen = new Set<string>();
+  const deduped: TorrentSearchResult[] = [];
+  for (const item of results) {
+    if (!seen.has(item.magnet)) {
+      seen.add(item.magnet);
+      deduped.push(item);
+    }
+  }
+
+  return deduped.slice(0, 30);
 }
 
 /**

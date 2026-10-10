@@ -132,6 +132,7 @@ export type TorrentSearchResult = {
   peers: number;
   tracker?: string;
   quality?: string;
+  translation?: string;
 };
 
 export type TorrentFile = {

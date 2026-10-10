@@ -4,11 +4,12 @@ import { searchTorrents } from '@/lib/services/torrents';
 export async function GET(request: NextRequest) {
   try {
     const q = request.nextUrl.searchParams.get('q') || '';
-    if (!q.trim()) {
+    const originalTitle = request.nextUrl.searchParams.get('originalTitle') || undefined;
+    if (!q.trim() && !originalTitle?.trim()) {
       return NextResponse.json([]);
     }
 
-    const results = await searchTorrents(q);
+    const results = await searchTorrents(q, originalTitle);
     return NextResponse.json(results);
   } catch (err: any) {
     console.error('Torrent search API error:', err);

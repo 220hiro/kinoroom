@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Play, Sparkles, RefreshCw, ExternalLink } from 'lucide-react';
+import { Play, Sparkles, RefreshCw, ExternalLink, ShieldCheck, ShieldAlert } from 'lucide-react';
 
 interface OnlinePlayerProps {
   tmdbId: number;
@@ -24,6 +24,7 @@ export function OnlinePlayer({
 }: OnlinePlayerProps) {
   const [provider, setProvider] = useState<ProviderKey>('vidlink');
   const [key, setKey] = useState(0);
+  const [blockAds, setBlockAds] = useState(true);
 
   const idOrImdb = imdbId || tmdbId;
 
@@ -88,6 +89,29 @@ export function OnlinePlayer({
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Anti-Ad Shield Toggle */}
+          <button
+            onClick={() => setBlockAds(!blockAds)}
+            title="Блокировать всплывающую рекламу и новые вкладки"
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer border ${
+              blockAds
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                : 'bg-red-500/10 border-red-500/30 text-red-400'
+            }`}
+          >
+            {blockAds ? (
+              <>
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>Анти-реклама: ВКЛ</span>
+              </>
+            ) : (
+              <>
+                <ShieldAlert className="w-3.5 h-3.5" />
+                <span>Анти-реклама: ВЫКЛ</span>
+              </>
+            )}
+          </button>
+
           <button
             onClick={() => setKey((k) => k + 1)}
             title="Перезагрузить плеер"
@@ -107,20 +131,25 @@ export function OnlinePlayer({
         </div>
       </div>
 
-      {/* Responsive Iframe Container */}
+      {/* Responsive Iframe Container with Sandbox Anti-Ad */}
       <div className="relative w-full aspect-video bg-black rounded-2xl overflow-hidden border border-white/10 shadow-2xl">
         <iframe
-          key={`${provider}-${key}-${season}-${episode}`}
+          key={`${provider}-${key}-${season}-${episode}-${blockAds}`}
           src={currentUrl}
+          sandbox={blockAds ? 'allow-scripts allow-same-origin allow-forms allow-presentation' : undefined}
           allowFullScreen
           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
           className="w-full h-full border-0"
         />
       </div>
 
-      <div className="text-center text-xs text-gray-400">
-        Если текущий сервер загружается медленно или выдал ошибку, просто нажмите на соседний (например, <strong className="text-white">VidSrc ME</strong> или <strong className="text-white">VidSrc HD</strong>).
-        Для просмотра в максимальном качестве с русской озвучкой переключитесь на вкладку <strong className="text-amber-400">«🧲 Торрент-стриминг»</strong>.
+      <div className="flex flex-col sm:flex-row items-center justify-between text-xs text-gray-400 gap-2">
+        <span>
+          🛡️ <strong>Анти-реклама активна:</strong> браузер блокирует все всплывающие окна и переход на сайты букмекеров при клике.
+        </span>
+        <span className="text-gray-400">
+          Для 100% чистого видео без рекламы перейдите на вкладку <strong className="text-amber-400">«🧲 Торрент-стриминг»</strong>.
+        </span>
       </div>
     </div>
   );

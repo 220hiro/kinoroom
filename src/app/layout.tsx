@@ -6,6 +6,12 @@ import { AuthGuard } from '@/components/AuthGuard';
 export const metadata: Metadata = {
   title: 'КиноРум · Приватный онлайн-кинотеатр',
   description: 'Онлайн-кинотеатр в стиле Лампы: моментальный просмотр без плагинов, прямая трансляция любых торрентов и поиск по открытым базам.',
+  manifest: '/manifest.webmanifest',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: 'КиноРум PRO',
+  },
 };
 
 export default function RootLayout({

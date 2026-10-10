@@ -30,7 +30,8 @@ import {
   getActiveProfileId,
   isBookmarked,
   toggleBookmark,
-  saveHistory
+  saveHistory,
+  getWatchProgress
 } from '@/lib/storage';
 
 interface TitlePageProps {
@@ -63,6 +64,8 @@ export default function TitlePage({ params }: TitlePageProps) {
   const [torrentFilter, setTorrentFilter] = useState<'all' | 'high_seeds' | 'hd' | 'dub'>('all');
   const [searchTorrentText, setSearchTorrentText] = useState('');
 
+  const [savedProgressTime, setSavedProgressTime] = useState<number | null>(null);
+
   // Load details
   useEffect(() => {
     async function loadData() {
@@ -75,12 +78,20 @@ export default function TitlePage({ params }: TitlePageProps) {
 
         const profileId = getActiveProfileId();
         setBookmarked(isBookmarked(profileId, mediaId, mediaType));
+
+        // Check if there is saved watch progress
+        const progress = getWatchProgress(profileId, mediaId, mediaType, selectedSeason, selectedEpisode);
+        if (progress && progress.currentTime > 15) {
+          setSavedProgressTime(progress.currentTime);
+        } else {
+          setSavedProgressTime(null);
+        }
       } catch (err) {
         console.error('Load details error:', err);
       }
     }
     loadData();
-  }, [mediaType, mediaId, selectedSeason]);
+  }, [mediaType, mediaId, selectedSeason, selectedEpisode]);
 
   // Fetch torrents helper
   const fetchTorrents = async (overrideQuery?: string) => {
@@ -143,6 +154,17 @@ export default function TitlePage({ params }: TitlePageProps) {
     if (torrentFilter === 'dub') return Boolean(t.translation);
     return true;
   });
+
+  const formatTime = (seconds: number) => {
+    if (isNaN(seconds) || seconds <= 0) return '00:00';
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = Math.floor(seconds % 60);
+    if (h > 0) {
+      return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    }
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
 
   const handleBookmarkClick = () => {
     if (!media) return;
@@ -258,12 +280,29 @@ export default function TitlePage({ params }: TitlePageProps) {
 
             {/* Action Buttons */}
             <div className="flex flex-wrap items-center gap-4 pt-4">
+              {savedProgressTime && savedProgressTime > 15 && (
+                <button
+                  onClick={() => {
+                    setActiveTab('torrent');
+                    handleStartWatch();
+                  }}
+                  className="flex items-center gap-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black font-bold px-7 py-3 rounded-xl transition-all duration-300 hover:scale-105 shadow-xl shadow-amber-500/25 cursor-pointer"
+                >
+                  <Sparkles className="w-5 h-5 fill-current" />
+                  <span>Продолжить с {formatTime(savedProgressTime)}</span>
+                </button>
+              )}
+
               <button
                 onClick={handleStartWatch}
-                className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white font-bold px-7 py-3 rounded-xl transition-all duration-300 hover:scale-105 shadow-xl shadow-red-600/30 cursor-pointer"
+                className={`flex items-center gap-2 text-white font-bold px-7 py-3 rounded-xl transition-all duration-300 hover:scale-105 shadow-xl cursor-pointer ${
+                  savedProgressTime && savedProgressTime > 15
+                    ? 'bg-white/10 hover:bg-white/20 border border-white/15'
+                    : 'bg-red-600 hover:bg-red-700 shadow-red-600/30'
+                }`}
               >
                 <Play className="w-5 h-5 fill-current" />
-                <span>Смотреть</span>
+                <span>{savedProgressTime && savedProgressTime > 15 ? 'Смотреть с начала' : 'Смотреть'}</span>
               </button>
 
               <button
@@ -413,6 +452,7 @@ export default function TitlePage({ params }: TitlePageProps) {
               {selectedMagnet ? (
                 <TorrentPlayer
                   magnet={selectedMagnet}
+                  initialTime={savedProgressTime ?? undefined}
                   onTimeUpdate={handleTimeUpdate}
                 />
               ) : (

@@ -5,6 +5,8 @@ import { MediaCarousel } from '@/components/MediaCarousel';
 import Link from 'next/link';
 import { Magnet, Sparkles } from 'lucide-react';
 
+import { ContinueWatching } from '@/components/ContinueWatching';
+
 export const revalidate = 3600; // 1 hour cache
 
 export default async function HomePage() {
@@ -44,6 +46,9 @@ export default async function HomePage() {
           </Link>
         </div>
       </div>
+
+      {/* Continue Watching Section */}
+      <ContinueWatching />
 
       {/* Media Carousels */}
       <div className="space-y-6">

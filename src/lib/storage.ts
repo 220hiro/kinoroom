@@ -70,7 +70,54 @@ export function saveHistory(profileId: string, item: WatchProgress) {
   localStorage.setItem(`${STORAGE_PREFIX}${profileId}:history`, JSON.stringify(history.slice(0, 50)));
 }
 
-// Bookmarks / Watchlist
+export function getWatchProgress(
+  profileId: string,
+  mediaId: number,
+  mediaType: string,
+  season?: number,
+  episode?: number
+): WatchProgress | null {
+  const history = getHistory(profileId);
+  return (
+    history.find((h) => {
+      const matchMedia = h.media.id === mediaId && h.media.type === mediaType;
+      if (!matchMedia) return false;
+      if (season !== undefined && h.season !== undefined) {
+        return h.season === season && (episode === undefined || h.episode === episode);
+      }
+      return true;
+    }) || null
+  );
+}
+
+export type AppSettings = {
+  torrServerUrl: string;
+  useTorrServer: boolean;
+  defaultExternalPlayer: 'vlc' | 'potplayer' | 'none';
+};
+
+const DEFAULT_SETTINGS: AppSettings = {
+  torrServerUrl: 'http://127.0.0.1:8090',
+  useTorrServer: false,
+  defaultExternalPlayer: 'none'
+};
+
+export function getSettings(): AppSettings {
+  if (typeof window === 'undefined') return DEFAULT_SETTINGS;
+  try {
+    const raw = localStorage.getItem(`${STORAGE_PREFIX}settings`);
+    return raw ? { ...DEFAULT_SETTINGS, ...JSON.parse(raw) } : DEFAULT_SETTINGS;
+  } catch {
+    return DEFAULT_SETTINGS;
+  }
+}
+
+export function saveSettings(settings: Partial<AppSettings>) {
+  if (typeof window === 'undefined') return;
+  const current = getSettings();
+  const updated = { ...current, ...settings };
+  localStorage.setItem(`${STORAGE_PREFIX}settings`, JSON.stringify(updated));
+}
 export function getBookmarks(profileId: string): Media[] {
   if (typeof window === 'undefined') return [];
   try {

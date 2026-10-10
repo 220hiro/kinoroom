@@ -36,6 +36,14 @@ export default function BookmarksPage() {
     return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
+  const handleClearHistory = () => {
+    if (typeof window !== 'undefined' && window.confirm('Очистить всю историю просмотров?')) {
+      const profileId = getActiveProfileId();
+      localStorage.removeItem(`kinoroom:${profileId}:history`);
+      setHistory([]);
+    }
+  };
+
   return (
     <div className="min-h-screen pt-24 pb-20 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
       {/* Header */}
@@ -47,28 +55,40 @@ export default function BookmarksPage() {
           </p>
         </div>
 
-        {/* Tab Toggle */}
-        <div className="flex items-center gap-2 bg-white/5 p-1 rounded-xl border border-white/10 w-fit">
-          <button
-            onClick={() => setActiveTab('bookmarks')}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              activeTab === 'bookmarks'
-                ? 'bg-amber-500 text-black shadow-lg font-bold'
-                : 'text-gray-400 hover:text-white'
-            }`}
-          >
-            <Bookmark className="w-3.5 h-3.5" /> Буду смотреть ({bookmarks.length})
-          </button>
-          <button
-            onClick={() => setActiveTab('history')}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              activeTab === 'history'
-                ? 'bg-red-600 text-white shadow-lg'
-                : 'text-gray-400 hover:text-white'
-            }`}
-          >
-            <History className="w-3.5 h-3.5" /> История ({history.length})
-          </button>
+        {/* Tab Toggle & Actions */}
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 bg-white/5 p-1 rounded-xl border border-white/10 w-fit">
+            <button
+              onClick={() => setActiveTab('bookmarks')}
+              className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'bookmarks'
+                  ? 'bg-amber-500 text-black shadow-lg font-bold'
+                  : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <Bookmark className="w-3.5 h-3.5" /> Буду смотреть ({bookmarks.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('history')}
+              className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'history'
+                  ? 'bg-red-600 text-white shadow-lg'
+                  : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <History className="w-3.5 h-3.5" /> История ({history.length})
+            </button>
+          </div>
+
+          {activeTab === 'history' && history.length > 0 && (
+            <button
+              onClick={handleClearHistory}
+              title="Очистить историю просмотров"
+              className="p-2 rounded-xl bg-white/5 hover:bg-red-600/20 text-gray-400 hover:text-red-400 border border-white/10 transition-colors cursor-pointer"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
 

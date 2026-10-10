@@ -75,11 +75,19 @@ export type MediaSource = {
 
 export type ResolvedMedia = MediaSource;
 
+export type CatalogOptions = {
+  type: MediaType;
+  genre?: string;
+  sortBy?: 'popularity.desc' | 'vote_average.desc' | 'primary_release_date.desc';
+  page?: number;
+};
+
 export interface MetadataProvider {
   search(query: string): Promise<Media[]>;
   details(type: MediaType, id: number): Promise<Media>;
   season(id: number, season: number): Promise<Episode[]>;
   home(): Promise<{ title: string; items: Media[] }[]>;
+  catalog(options: CatalogOptions): Promise<{ items: Media[]; totalPages: number }>;
 }
 
 export interface MediaSourceProvider {

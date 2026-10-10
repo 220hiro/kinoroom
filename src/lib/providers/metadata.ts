@@ -1,6 +1,6 @@
 import { cache, fetchJSON, HOUR } from '@/lib/services/cache';
 import { openCatalog } from './catalog';
-import type { Media, MetadataProvider, MediaType, Episode } from '@/lib/types';
+import type { Media, MetadataProvider, MediaType, Episode, CatalogOptions } from '@/lib/types';
 
 const DEFAULT_TMDB_KEY = '844dba0bfd8f3a4f3799f6130ef9e335';
 
@@ -133,6 +133,30 @@ export class TMDBProvider implements MetadataProvider {
     }
     return successful;
   }
+
+  async catalog(options: CatalogOptions) {
+    const type = options.type || 'movie';
+    const params: Record<string, string> = {
+      sort_by: options.sortBy || 'popularity.desc',
+      page: (options.page || 1).toString(),
+      'vote_count.gte': options.sortBy === 'vote_average.desc' ? '100' : '20'
+    };
+
+    if (options.genre) {
+      params['with_genres'] = options.genre;
+    }
+
+    try {
+      const data = await tmdb<{ results: Row[]; total_pages: number }>(`discover/${type}`, params);
+      const items = (data.results || []).map(r => normalize(r, type));
+      return {
+        items,
+        totalPages: Math.min(data.total_pages || 1, 50)
+      };
+    } catch {
+      return { items: [], totalPages: 1 };
+    }
+  }
 }
 
 export class OpenMetadataProvider implements MetadataProvider {
@@ -153,6 +177,14 @@ export class OpenMetadataProvider implements MetadataProvider {
 
   async home() {
     return [{ title: 'Открытое кино', items: openCatalog }];
+  }
+
+  async catalog(options: CatalogOptions) {
+    let items = openCatalog.filter(x => x.type === options.type);
+    if (options.genre) {
+      items = items.filter(x => x.genres.includes(options.genre!));
+    }
+    return { items, totalPages: 1 };
   }
 }
 

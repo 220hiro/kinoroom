@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { Navbar } from '@/components/Navbar';
+import { BottomNav } from '@/components/BottomNav';
 import { AuthGuard } from '@/components/AuthGuard';
 
 export const metadata: Metadata = {
@@ -25,7 +26,7 @@ export default function RootLayout({
         <AuthGuard>
           <Navbar />
           <main className="flex-grow">{children}</main>
-          <footer className="border-t border-white/5 py-8 text-center text-xs text-gray-500 bg-[#06070a]">
+          <footer className="border-t border-white/5 py-8 text-center text-xs text-gray-500 bg-[#06070a] mb-14 md:mb-0">
             <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-4">
               <div className="flex items-center gap-2">
                 <span className="font-bold text-gray-300">КИНОРУМ PRO</span>
@@ -36,6 +37,7 @@ export default function RootLayout({
               </div>
             </div>
           </footer>
+          <BottomNav />
         </AuthGuard>
       </body>
     </html>

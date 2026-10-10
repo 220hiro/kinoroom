@@ -44,6 +44,11 @@ export function detectTranslation(rawTitle: string): string | undefined {
   if (/Гоблин|Пучков/i.test(rawTitle)) return 'Гоблин (П/П)';
   if (/(?:\|\s*|\[|\(|\b)(?:D|ДБ|Дубляж|Дублированный)(?:\s*\||\]|\)|\b)/i.test(rawTitle)) return 'Дубляж';
   if (/(?:\|\s*|\[|\(|\b)(?:MVO|П|Многоголосый|Проф\.\s*многоголосый)(?:\s*\||\]|\)|\b)/i.test(rawTitle)) return 'Многоголосый';
+  if (/ТВ-?3|ТВ3/i.test(rawTitle)) return 'ТВ-3';
+  if (/Кураж\s*[-–]?\s*Бамбей/i.test(rawTitle)) return 'Кураж-Бамбей';
+  if (/BaibaKo|Байбако/i.test(rawTitle)) return 'BaibaKo';
+  if (/Кравец/i.test(rawTitle)) return 'Кравец-Рекордз';
+  if (/Jaskier|Яскьер/i.test(rawTitle)) return 'Jaskier';
   if (/(?:\|\s*|\[|\(|\b)(?:AVO|Авторский|Одноголосый|А)(?:\s*\||\]|\)|\b)/i.test(rawTitle)) return 'Авторский';
   if (/Субтитры|Subtitles|SoftSub/i.test(rawTitle)) return 'Субтитры';
   return undefined;

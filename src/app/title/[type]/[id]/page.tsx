@@ -45,7 +45,7 @@ export default function TitlePage({ params }: TitlePageProps) {
   const [selectedEpisode, setSelectedEpisode] = useState(1);
 
   // Streaming player state
-  const [activeTab, setActiveTab] = useState<'online' | 'torrent'>('online');
+  const [activeTab, setActiveTab] = useState<'online' | 'torrent'>('torrent');
   const [bookmarked, setBookmarked] = useState(false);
   const [isPlayerOpen, setIsPlayerOpen] = useState(false);
 
@@ -287,18 +287,6 @@ export default function TitlePage({ params }: TitlePageProps) {
           <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 pb-4">
             <div className="flex items-center gap-2">
               <button
-                onClick={() => setActiveTab('online')}
-                className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition-all cursor-pointer ${
-                  activeTab === 'online'
-                    ? 'bg-red-600 text-white shadow-lg shadow-red-600/30'
-                    : 'bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white'
-                }`}
-              >
-                <Radio className="w-4 h-4" />
-                <span>⚡ Онлайн-плееры (VidLink / VidSrc / Smashy)</span>
-              </button>
-
-              <button
                 onClick={() => setActiveTab('torrent')}
                 className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition-all cursor-pointer ${
                   activeTab === 'torrent'
@@ -306,14 +294,26 @@ export default function TitlePage({ params }: TitlePageProps) {
                     : 'bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white'
                 }`}
               >
-                <Magnet className="w-4 h-4 text-amber-400" />
-                <span>🧲 Торрент-стриминг 1080p/4K (Русский Дубляж)</span>
+                <Magnet className="w-4 h-4 text-black" />
+                <span>🧲 Торрент-стриминг 1080p/4K (Без рекламы)</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('online')}
+                className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition-all cursor-pointer ${
+                  activeTab === 'online'
+                    ? 'bg-red-600 text-white shadow-lg shadow-red-600/30 font-bold'
+                    : 'bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white'
+                }`}
+              >
+                <Radio className="w-4 h-4" />
+                <span>⚡ Онлайн-балансеры</span>
               </button>
             </div>
 
             <div className="text-xs text-gray-400">
-              {activeTab === 'online' && 'Мгновенный просмотр через онлайн-серверы'}
-              {activeTab === 'torrent' && 'Прямая трансляция с трекеров в максимальном битрейте'}
+              {activeTab === 'torrent' && 'Прямая чистая трансляция без единой рекламы'}
+              {activeTab === 'online' && 'Мгновенный просмотр через внешние веб-серверы'}
             </div>
           </div>
 

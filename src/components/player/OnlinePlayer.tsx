@@ -137,6 +137,7 @@ export function OnlinePlayer({
           key={`${provider}-${key}-${season}-${episode}-${blockAds}`}
           src={currentUrl}
           sandbox={blockAds ? 'allow-scripts allow-same-origin allow-forms allow-presentation' : undefined}
+          referrerPolicy="no-referrer"
           allowFullScreen
           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
           className="w-full h-full border-0"

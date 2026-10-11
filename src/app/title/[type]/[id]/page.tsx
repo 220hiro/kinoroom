@@ -370,34 +370,34 @@ export default function TitlePage({ params }: TitlePageProps) {
         {/* Streaming & Player Section */}
         <div id="media-player-container" className="mt-12 space-y-6">
           {/* Stream Type Tabs */}
-          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 pb-4">
-            <div className="flex items-center gap-2">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/10 pb-4">
+            <div className="grid grid-cols-2 gap-2 w-full sm:w-auto sm:flex sm:items-center">
               <button
                 onClick={() => setActiveTab('torrent')}
-                className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition-all cursor-pointer ${
+                className={`flex items-center justify-center gap-2 px-3 sm:px-5 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all cursor-pointer text-center ${
                   activeTab === 'torrent'
-                    ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/30 font-bold'
-                    : 'bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white'
+                    ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/30'
+                    : 'bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white border border-white/5'
                 }`}
               >
-                <Magnet className="w-4 h-4 text-black" />
-                <span>🧲 Торрент-стриминг 1080p/4K (Без рекламы)</span>
+                <Magnet className="w-4 h-4 shrink-0 text-current" />
+                <span className="truncate">🧲 Торренты (Без рекламы)</span>
               </button>
 
               <button
                 onClick={() => setActiveTab('online')}
-                className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition-all cursor-pointer ${
+                className={`flex items-center justify-center gap-2 px-3 sm:px-5 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all cursor-pointer text-center ${
                   activeTab === 'online'
-                    ? 'bg-red-600 text-white shadow-lg shadow-red-600/30 font-bold'
-                    : 'bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white'
+                    ? 'bg-red-600 text-white shadow-lg shadow-red-600/30'
+                    : 'bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white border border-white/5'
                 }`}
               >
-                <Radio className="w-4 h-4" />
-                <span>⚡ Онлайн-балансеры</span>
+                <Radio className="w-4 h-4 shrink-0" />
+                <span className="truncate">⚡ Онлайн-плееры</span>
               </button>
             </div>
 
-            <div className="text-xs text-gray-400">
+            <div className="text-[11px] sm:text-xs text-gray-400 text-center sm:text-right">
               {activeTab === 'torrent' && 'Прямая чистая трансляция без единой рекламы'}
               {activeTab === 'online' && 'Мгновенный просмотр через внешние веб-серверы'}
             </div>
@@ -457,7 +457,7 @@ export default function TitlePage({ params }: TitlePageProps) {
                   onSwitchToOnline={() => setActiveTab('online')}
                 />
               ) : (
-                <div className="w-full aspect-video bg-black/50 rounded-2xl border border-white/10 flex flex-col items-center justify-center p-6 text-center">
+                <div className="w-full aspect-video min-h-[220px] bg-black/50 rounded-2xl border border-white/10 flex flex-col items-center justify-center p-6 text-center">
                   <Magnet className="w-12 h-12 text-amber-400 mb-3" />
                   <p className="text-gray-300 text-sm">
                     {torrents.length > 0

@@ -330,7 +330,7 @@ export function TorrentPlayer({
     <div
       ref={containerRef}
       onMouseMove={handleMouseMove}
-      className="relative w-full aspect-video bg-black rounded-2xl overflow-hidden shadow-2xl border border-white/10 group select-none flex flex-col justify-between"
+      className="relative w-full min-h-[250px] sm:min-h-0 aspect-video bg-black rounded-2xl overflow-hidden shadow-2xl border border-white/10 group select-none flex flex-col justify-between"
     >
       {/* Native Video Element */}
       <video
@@ -378,13 +378,13 @@ export function TorrentPlayer({
 
       {/* Top Stream Status & Controls Bar */}
       <div
-        className={`absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/85 via-black/50 to-transparent flex items-center justify-between text-xs text-gray-300 transition-opacity duration-300 z-10 ${
+        className={`absolute top-0 left-0 right-0 p-2.5 sm:p-4 bg-gradient-to-b from-black/85 via-black/50 to-transparent flex items-center justify-between text-xs text-gray-300 transition-opacity duration-300 z-10 ${
           showControls || !isPlaying ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
       >
-        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-          <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-600/30 text-red-400 font-semibold border border-red-500/30 backdrop-blur-md">
-            <Radio className="w-3.5 h-3.5 animate-pulse text-red-500" />
+        <div className="flex items-center gap-1.5 sm:gap-3 flex-wrap">
+          <span className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full bg-red-600/30 text-red-400 font-semibold border border-red-500/30 backdrop-blur-md text-[11px] sm:text-xs">
+            <Radio className="w-3 h-3 sm:w-3.5 sm:h-3.5 animate-pulse text-red-500" />
             <span>{settings.useTorrServer ? 'TorrServer' : 'Торрент-поток'}</span>
           </span>
 
@@ -404,15 +404,15 @@ export function TorrentPlayer({
         </div>
 
         {/* Right Top Actions */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2">
           {/* Multi-file selector (if more than 1 video file in torrent) */}
           {status && status.files.filter((f) => f.isVideo).length > 1 && (
-            <div className="flex items-center gap-1.5 bg-black/60 px-2 py-1 rounded-lg border border-white/10">
-              <FileVideo className="w-3.5 h-3.5 text-amber-400" />
+            <div className="flex items-center gap-1 bg-black/60 px-1.5 py-0.5 sm:px-2 sm:py-1 rounded-lg border border-white/10">
+              <FileVideo className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-amber-400" />
               <select
                 value={selectedFileIndex}
                 onChange={(e) => setSelectedFileIndex(parseInt(e.target.value, 10))}
-                className="bg-transparent text-xs text-white focus:outline-none max-w-[140px] truncate"
+                className="bg-transparent text-[11px] sm:text-xs text-white focus:outline-none max-w-[100px] sm:max-w-[140px] truncate"
               >
                 {status.files
                   .filter((f) => f.isVideo)
@@ -437,29 +437,35 @@ export function TorrentPlayer({
             </button>
 
             {showExternalMenu && (
-              <div className="absolute right-0 top-full mt-2 w-52 bg-[#12141f] border border-white/15 rounded-xl shadow-2xl p-2 z-30 space-y-1">
-                <a
-                  href={`vlc://${getFullStreamUrl()}`}
-                  className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-white/10 text-xs text-gray-200 hover:text-white flex items-center justify-between transition-colors block"
-                >
-                  <span>Запустить в VLC</span>
-                  <span className="text-[10px] text-amber-400 font-mono">vlc://</span>
-                </a>
-                <a
-                  href={`potplayer://${getFullStreamUrl()}`}
-                  className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-white/10 text-xs text-gray-200 hover:text-white flex items-center justify-between transition-colors block"
-                >
-                  <span>Запустить в PotPlayer</span>
-                  <span className="text-[10px] text-blue-400 font-mono">potplayer://</span>
-                </a>
-                <button
-                  onClick={handleDownloadM3u}
-                  className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-white/10 text-xs text-emerald-300 hover:text-emerald-200 flex items-center justify-between transition-colors cursor-pointer"
-                >
-                  <span>Скачать плейлист .m3u</span>
-                  <Download className="w-3 h-3" />
-                </button>
-              </div>
+              <>
+                <div
+                  className="fixed inset-0 z-20"
+                  onClick={() => setShowExternalMenu(false)}
+                />
+                <div className="absolute right-0 top-full mt-2 w-48 sm:w-52 max-w-[calc(100vw-32px)] bg-[#12141f] border border-white/15 rounded-xl shadow-2xl p-2 z-30 space-y-1">
+                  <a
+                    href={`vlc://${getFullStreamUrl()}`}
+                    className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-white/10 text-xs text-gray-200 hover:text-white flex items-center justify-between transition-colors block"
+                  >
+                    <span>Запустить в VLC</span>
+                    <span className="text-[10px] text-amber-400 font-mono">vlc://</span>
+                  </a>
+                  <a
+                    href={`potplayer://${getFullStreamUrl()}`}
+                    className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-white/10 text-xs text-gray-200 hover:text-white flex items-center justify-between transition-colors block"
+                  >
+                    <span>Запустить в PotPlayer</span>
+                    <span className="text-[10px] text-blue-400 font-mono">potplayer://</span>
+                  </a>
+                  <button
+                    onClick={handleDownloadM3u}
+                    className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-white/10 text-xs text-emerald-300 hover:text-emerald-200 flex items-center justify-between transition-colors cursor-pointer"
+                  >
+                    <span>Скачать плейлист .m3u</span>
+                    <Download className="w-3 h-3" />
+                  </button>
+                </div>
+              </>
             )}
           </div>
 
@@ -476,14 +482,14 @@ export function TorrentPlayer({
 
       {/* Center Buffering Spinner */}
       {isLoadingMetadata && !hasStartedPlaying && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/85 backdrop-blur-sm gap-3 z-10 px-4 text-center">
-          <Loader2 className="w-10 h-10 text-red-500 animate-spin" />
-          <h4 className="text-base font-semibold text-white">Подключение к пирам...</h4>
-          <p className="text-xs text-gray-400 max-w-sm">
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/85 backdrop-blur-sm gap-2.5 z-10 px-4 text-center overflow-y-auto py-4">
+          <Loader2 className="w-8 h-8 sm:w-10 sm:h-10 text-red-500 animate-spin shrink-0" />
+          <h4 className="text-sm sm:text-base font-semibold text-white">Подключение к пирам...</h4>
+          <p className="text-[11px] sm:text-xs text-gray-400 max-w-sm">
             Загрузка первых блоков видеопотока. Обычно занимает от 5 до 15 секунд в зависимости от сидов.
           </p>
           {status && (
-            <div className="flex items-center gap-4 text-xs text-gray-300 mt-1 bg-white/5 px-4 py-1.5 rounded-full border border-white/10">
+            <div className="flex items-center gap-3 text-[11px] sm:text-xs text-gray-300 mt-0.5 bg-white/5 px-3 py-1 rounded-full border border-white/10">
               <span>Сиды/Пиры: {status.numPeers}</span>
               <span>Скорость: {formatBytes(status.downloadSpeed)}/с</span>
             </div>
@@ -491,14 +497,14 @@ export function TorrentPlayer({
 
           {/* Quick Fallback Buttons if connecting takes > 6 seconds */}
           {showSlowPeerTip && (
-            <div className="mt-3 p-3.5 bg-[#12141f] border border-amber-500/40 rounded-2xl max-w-sm w-full text-center space-y-2.5 shadow-2xl animate-fade-in">
+            <div className="mt-2 p-3 bg-[#12141f] border border-amber-500/40 rounded-2xl max-w-sm w-full text-center space-y-2 shadow-2xl animate-fade-in shrink-0">
               <div className="text-xs text-amber-300 font-bold flex items-center justify-center gap-1.5">
                 <span>⚡ Пиры долго подключаются?</span>
               </div>
-              <p className="text-[11px] text-gray-400">
-                В облачном режиме скорость поиска пиров может зависеть от трекера. Вы можете:
+              <p className="text-[10px] sm:text-[11px] text-gray-400">
+                В облачном режиме скорость поиска пиров может зависеть от трекера:
               </p>
-              <div className="flex flex-col gap-2">
+              <div className="flex flex-col gap-1.5">
                 {onSwitchToOnline && (
                   <button
                     onClick={onSwitchToOnline}
@@ -533,40 +539,40 @@ export function TorrentPlayer({
           onClick={togglePlay}
           className="absolute inset-0 flex items-center justify-center bg-black/30 cursor-pointer"
         >
-          <div className="w-20 h-20 rounded-full bg-red-600/90 text-white flex items-center justify-center shadow-2xl hover:scale-110 transition-transform">
-            <Play className="w-10 h-10 fill-current ml-1" />
+          <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-red-600/90 text-white flex items-center justify-center shadow-2xl hover:scale-110 transition-transform">
+            <Play className="w-8 h-8 sm:w-10 sm:h-10 fill-current ml-1" />
           </div>
         </div>
       )}
 
       {/* Bottom Controls Bar */}
       <div
-        className={`absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/95 via-black/80 to-transparent flex flex-col gap-2 transition-opacity duration-300 z-10 ${
+        className={`absolute bottom-0 left-0 right-0 p-2 sm:p-4 bg-gradient-to-t from-black/95 via-black/80 to-transparent flex flex-col gap-1.5 sm:gap-2 transition-opacity duration-300 z-10 ${
           showControls || !isPlaying ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
       >
         {/* Timeline Slider */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 px-1">
           <input
             type="range"
             min={0}
             max={duration || 100}
             value={currentTime}
             onChange={handleSeek}
-            className="w-full h-1.5 bg-white/20 rounded-lg appearance-none cursor-pointer accent-red-600 focus:outline-none"
+            className="w-full h-1 sm:h-1.5 bg-white/20 rounded-lg appearance-none cursor-pointer accent-red-600 focus:outline-none"
           />
         </div>
 
         {/* Bottom Buttons */}
-        <div className="flex items-center justify-between text-white">
-          <div className="flex items-center gap-3 sm:gap-4">
+        <div className="flex items-center justify-between text-white px-1">
+          <div className="flex items-center gap-1.5 sm:gap-3">
             {/* Play/Pause */}
             <button
               onClick={togglePlay}
-              className="p-1.5 hover:text-red-500 transition-colors cursor-pointer"
+              className="p-1 sm:p-1.5 hover:text-red-500 transition-colors cursor-pointer"
               title="Пробел / K"
             >
-              {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5 fill-current" />}
+              {isPlaying ? <Pause className="w-4 h-4 sm:w-5 sm:h-5" /> : <Play className="w-4 h-4 sm:w-5 sm:h-5 fill-current" />}
             </button>
 
             {/* Rewind / Fast Forward */}
@@ -575,20 +581,20 @@ export function TorrentPlayer({
               className="p-1 hover:text-gray-300 transition-colors cursor-pointer"
               title="-10 сек (Стрелка влево)"
             >
-              <RotateCcw className="w-4 h-4" />
+              <RotateCcw className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             </button>
             <button
               onClick={() => seekRelative(10)}
               className="p-1 hover:text-gray-300 transition-colors cursor-pointer"
               title="+10 сек (Стрелка вправо)"
             >
-              <RotateCw className="w-4 h-4" />
+              <RotateCw className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             </button>
 
             {/* Volume */}
-            <div className="flex items-center gap-2 group/volume">
+            <div className="flex items-center gap-1.5 group/volume">
               <button onClick={toggleMute} className="p-1 hover:text-gray-300 cursor-pointer" title="M">
-                {isMuted || volume === 0 ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+                {isMuted || volume === 0 ? <VolumeX className="w-4 h-4 sm:w-5 sm:h-5" /> : <Volume2 className="w-4 h-4 sm:w-5 sm:h-5" />}
               </button>
               <input
                 type="range"
@@ -602,70 +608,82 @@ export function TorrentPlayer({
             </div>
 
             {/* Time Display */}
-            <div className="text-xs text-gray-300 font-mono ml-2">
+            <div className="text-[10px] sm:text-xs text-gray-300 font-mono ml-1 sm:ml-2 whitespace-nowrap">
               <span>{formatTime(currentTime)}</span>
               <span className="text-gray-500"> / </span>
               <span>{formatTime(duration)}</span>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5 sm:gap-3">
             {/* Speed selector */}
             <div className="relative">
               <button
                 onClick={() => setShowSpeedMenu(!showSpeedMenu)}
-                className="flex items-center gap-1 text-xs font-bold px-2 py-1 rounded bg-white/10 hover:bg-white/20 transition-colors cursor-pointer"
+                className="flex items-center gap-1 text-[11px] sm:text-xs font-bold px-1.5 sm:px-2 py-0.5 sm:py-1 rounded bg-white/10 hover:bg-white/20 transition-colors cursor-pointer"
                 title="Скорость воспроизведения"
               >
-                <Gauge className="w-3.5 h-3.5" />
+                <Gauge className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                 <span>{playbackSpeed}x</span>
               </button>
 
               {showSpeedMenu && (
-                <div className="absolute right-0 bottom-full mb-2 bg-[#12141f] border border-white/15 rounded-xl shadow-2xl p-1 z-30 flex flex-col gap-0.5">
-                  {[0.75, 1, 1.25, 1.5, 2].map((s) => (
-                    <button
-                      key={s}
-                      onClick={() => handleSpeedSelect(s)}
-                      className={`px-3 py-1 rounded text-xs text-left transition-colors cursor-pointer ${
-                        playbackSpeed === s
-                          ? 'bg-amber-500 text-black font-bold'
-                          : 'text-gray-300 hover:bg-white/10 hover:text-white'
-                      }`}
-                    >
-                      {s}x
-                    </button>
-                  ))}
-                </div>
+                <>
+                  <div
+                    className="fixed inset-0 z-20"
+                    onClick={() => setShowSpeedMenu(false)}
+                  />
+                  <div className="absolute right-0 bottom-full mb-2 bg-[#12141f] border border-white/15 rounded-xl shadow-2xl p-1 z-30 flex flex-col gap-0.5">
+                    {[0.75, 1, 1.25, 1.5, 2].map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => handleSpeedSelect(s)}
+                        className={`px-3 py-1 rounded text-xs text-left transition-colors cursor-pointer ${
+                          playbackSpeed === s
+                            ? 'bg-amber-500 text-black font-bold'
+                            : 'text-gray-300 hover:bg-white/10 hover:text-white'
+                        }`}
+                      >
+                        {s}x
+                      </button>
+                    ))}
+                  </div>
+                </>
               )}
             </div>
 
             {/* Fullscreen */}
             <button
               onClick={toggleFullscreen}
-              className="p-1.5 hover:text-red-500 transition-colors cursor-pointer"
+              className="p-1 sm:p-1.5 hover:text-red-500 transition-colors cursor-pointer"
               title="На весь экран (F)"
             >
-              {isFullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
+              {isFullscreen ? <Minimize className="w-4 h-4 sm:w-5 sm:h-5" /> : <Maximize className="w-4 h-4 sm:w-5 sm:h-5" />}
             </button>
           </div>
         </div>
       </div>
 
-      {/* Settings Modal (TorrServer configuration) */}
+      {/* Settings Modal (TorrServer configuration) - Fullscreen Fixed Modal */}
       {showSettingsModal && (
-        <div className="absolute inset-0 bg-black/85 backdrop-blur-md z-40 flex items-center justify-center p-4">
-          <div className="bg-[#12141f] border border-white/20 rounded-2xl max-w-md w-full p-5 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between pb-2 border-b border-white/10">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+        <div
+          className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4 overflow-y-auto"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowSettingsModal(false);
+          }}
+        >
+          <div className="bg-[#12141f] border border-white/20 rounded-2xl max-w-md w-full p-5 sm:p-6 shadow-2xl space-y-4 my-auto relative max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-white/10">
+              <h3 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
                 <Settings className="w-4 h-4 text-amber-400" />
-                <span>Настройки стриминга (Lampa / TorrServer)</span>
+                <span>Настройки стриминга (TorrServer)</span>
               </h3>
               <button
                 onClick={() => setShowSettingsModal(false)}
-                className="text-gray-400 hover:text-white"
+                className="p-1.5 -mr-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                title="Закрыть"
               >
-                <X className="w-4 h-4" />
+                <X className="w-5 h-5" />
               </button>
             </div>
 
@@ -681,7 +699,7 @@ export function TorrentPlayer({
                   type="checkbox"
                   checked={useTorrServerToggle}
                   onChange={(e) => setUseTorrServerToggle(e.target.checked)}
-                  className="w-4 h-4 accent-amber-500 rounded"
+                  className="w-4 h-4 accent-amber-500 rounded cursor-pointer"
                 />
               </label>
 
@@ -703,21 +721,21 @@ export function TorrentPlayer({
                 </div>
               )}
 
-              <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 text-[11px] leading-relaxed">
+              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-[11px] sm:text-xs leading-relaxed">
                 💡 <strong>Совет:</strong> Если вы хотите смотреть тяжелые 4K фильмы без буферизации, используйте кнопку «Внешний плеер» ➔ «Запустить в VLC» или «Скачать .m3u».
               </div>
             </div>
 
-            <div className="flex justify-end gap-2 pt-2">
+            <div className="flex justify-end gap-2 pt-2 border-t border-white/10">
               <button
                 onClick={() => setShowSettingsModal(false)}
-                className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 text-xs font-semibold"
+                className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 text-xs font-semibold cursor-pointer"
               >
-                Отмена
+                Закрыть
               </button>
               <button
                 onClick={handleSaveSettings}
-                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold shadow"
+                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold shadow cursor-pointer"
               >
                 Сохранить
               </button>

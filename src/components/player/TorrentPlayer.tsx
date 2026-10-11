@@ -114,6 +114,15 @@ export function TorrentPlayer({
     (t) => isMp4Release(t.title) && t.magnet !== magnet
   );
 
+  // Reset state when magnet changes
+  useEffect(() => {
+    setVideoError(null);
+    setStatus(null);
+    setIsLoadingMetadata(true);
+    setHasStartedPlaying(false);
+    setShowSlowPeerTip(false);
+  }, [magnet]);
+
   // Poll torrent status
   useEffect(() => {
     let isMounted = true;
@@ -659,7 +668,11 @@ export function TorrentPlayer({
           <div className="flex flex-col gap-2 w-full max-w-xs">
             {mp4Alternative && onSelectTorrent && (
               <button
-                onClick={() => onSelectTorrent(mp4Alternative.magnet)}
+                onClick={() => {
+                  setVideoError(null);
+                  setIsLoadingMetadata(true);
+                  onSelectTorrent(mp4Alternative.magnet);
+                }}
                 className="w-full px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-lg transition-transform hover:scale-102 cursor-pointer flex items-center justify-center gap-2"
               >
                 <Sparkles className="w-4 h-4 text-amber-300" />

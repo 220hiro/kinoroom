@@ -118,13 +118,22 @@ export default function TitlePage({ params }: TitlePageProps) {
         setTorrents(data);
         if (data.length > 0) {
           setSelectedMagnet((prev) => {
-            if (prev && data.some((d) => d.magnet === prev)) return prev;
-            // On iOS (iPhone/iPad), prioritize releases that work natively in Safari (MP4 / КПК)
-            if (isIOS) {
-              const mp4Candidate = data.find((d) => isMp4Release(d.title));
-              if (mp4Candidate) return mp4Candidate.magnet;
+            const isAppleDevice = typeof navigator !== 'undefined' && (
+              /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+              (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+            );
+            const mp4Candidate = data.find((d) => isMp4Release(d.title));
+
+            // On Apple devices (iPhone/iPad Safari), always select MP4 release unless user explicitly chose another MP4
+            if (isAppleDevice && mp4Candidate) {
+              const currentTitle = data.find((d) => d.magnet === prev)?.title || '';
+              if (!prev || !isMp4Release(currentTitle)) {
+                return mp4Candidate.magnet;
+              }
             }
-            return data[0].magnet;
+
+            if (prev && data.some((d) => d.magnet === prev)) return prev;
+            return mp4Candidate ? mp4Candidate.magnet : data[0].magnet;
           });
         }
       }
@@ -466,6 +475,7 @@ export default function TitlePage({ params }: TitlePageProps) {
               {/* Torrent Live Player */}
               {selectedMagnet ? (
                 <TorrentPlayer
+                  key={`${selectedMagnet}-${selectedSeason}-${selectedEpisode}`}
                   magnet={selectedMagnet}
                   initialTime={savedProgressTime ?? undefined}
                   season={selectedSeason}
@@ -542,7 +552,13 @@ export default function TitlePage({ params }: TitlePageProps) {
                 Все ({torrents.length})
               </button>
               <button
-                onClick={() => setTorrentFilter('mp4')}
+                onClick={() => {
+                  setTorrentFilter('mp4');
+                  const mp4Cand = torrents.find((d) => isMp4Release(d.title));
+                  if (mp4Cand) {
+                    setSelectedMagnet(mp4Cand.magnet);
+                  }
+                }}
                 className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
                   torrentFilter === 'mp4'
                     ? 'bg-emerald-500 text-black font-bold shadow'

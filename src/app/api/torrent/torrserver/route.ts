@@ -97,10 +97,20 @@ function normalizeTorrServerStatus(data: any): TorrentStatus {
   };
 }
 
+export async function GET() {
+  const isConfigured = Boolean(process.env.TORRSERVER_URL);
+  const publicUrl = (process.env.TORRSERVER_PUBLIC_URL || process.env.TORRSERVER_URL || '').trim();
+
+  return NextResponse.json({
+    configured: isConfigured,
+    publicUrl: isConfigured ? publicUrl : null
+  });
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { torrServerUrl, torrServerAuth, magnet, hash } = body;
+    const { torrServerUrl, magnet, hash } = body;
 
     // Security policy:
     // If TORRSERVER_URL is configured on server environment, lock exclusively to it and server-configured auth.
@@ -113,10 +123,13 @@ export async function POST(request: NextRequest) {
       targetAuth = (process.env.TORRSERVER_AUTH || '').trim();
     } else {
       targetUrl = (torrServerUrl || '').trim();
-      targetAuth = (torrServerAuth || '').trim();
+      targetAuth = '';
 
       if (!targetUrl) {
-        return NextResponse.json({ error: 'Missing TorrServer URL' }, { status: 400 });
+        return NextResponse.json(
+          { error: 'TORRSERVER_URL не настроен на сервере Vercel. Укажите переменную окружения TORRSERVER_URL.' },
+          { status: 503 }
+        );
       }
 
       if (!isValidTorrServerUrl(targetUrl)) {
@@ -133,7 +146,7 @@ export async function POST(request: NextRequest) {
 
     const cleanBaseUrl = targetUrl.replace(/\/$/, '');
 
-    // Setup headers with optional Basic Auth
+    // Setup headers with optional Basic Auth (server-only secret)
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (targetAuth) {
       headers['Authorization'] =
@@ -144,7 +157,7 @@ export async function POST(request: NextRequest) {
 
     let torrData: any = null;
 
-    // 1. If hash is already known, query status using action: "get" to avoid repeatedly re-adding
+    // 1. If hash is already known, query status strictly using action: "get"
     if (hash) {
       try {
         const getRes = await fetch(`${cleanBaseUrl}/torrents`, {
@@ -156,14 +169,14 @@ export async function POST(request: NextRequest) {
         });
         if (getRes.ok) {
           torrData = await getRes.json();
+        } else if (getRes.status === 401) {
+          return NextResponse.json({ error: 'TorrServer unauthorized (401)' }, { status: 401 });
         }
       } catch {
-        // Fall back to add
+        // Query error, will check if data was loaded
       }
-    }
-
-    // 2. If not found or initial poll without hash, call action: "add"
-    if (!torrData && magnet) {
+    } else if (magnet) {
+      // 2. Only call action: "add" on initial poll when hash is not yet known
       const addRes = await fetch(`${cleanBaseUrl}/torrents`, {
         method: 'POST',
         headers,

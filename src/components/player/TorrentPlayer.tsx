@@ -39,58 +39,29 @@ interface TorrentPlayerProps {
 }
 
 /**
- * Builds an authenticated stream URL for TorrServer.
- * Supports embedding Basic credentials in the URL for native HTML5 <video> elements
- * and targeting GStreamer HLS master playlist for iOS Safari.
+ * Builds stream URL for TorrServer.
+ * Uses clean public URLs without embedding credentials into URL parameters.
+ * Supports GStreamer HLS master playlist for iOS Safari.
  */
 function buildTorrServerStreamUrl({
   baseUrl,
   magnet,
   fileIndex,
-  auth,
   infoHash,
   preferHls
 }: {
   baseUrl: string;
   magnet: string;
   fileIndex: number;
-  auth?: string;
   infoHash?: string | null;
   preferHls?: boolean;
 }): string {
-  try {
-    const parsed = new URL(baseUrl);
-    if (auth && auth.trim()) {
-      let creds = auth.trim();
-      if (creds.toLowerCase().startsWith('basic ')) {
-        try {
-          creds = atob(creds.slice(6).trim());
-        } catch {}
-      }
-      if (creds.includes(':')) {
-        const colonIdx = creds.indexOf(':');
-        parsed.username = encodeURIComponent(creds.slice(0, colonIdx));
-        parsed.password = encodeURIComponent(creds.slice(colonIdx + 1));
-      }
-    }
-
-    const authHost = parsed.username
-      ? `${parsed.protocol}//${parsed.username}${parsed.password ? `:${parsed.password}` : ''}@${parsed.host}`
-      : `${parsed.protocol}//${parsed.host}`;
-
-    // TorrServer -gst build provides /gst/{hash}/master.m3u8?index={index}
-    if (preferHls && infoHash) {
-      return `${authHost}/gst/${infoHash}/master.m3u8?index=${fileIndex}`;
-    }
-
-    return `${authHost}/stream?link=${encodeURIComponent(magnet)}&index=${fileIndex}&play`;
-  } catch {
-    const clean = baseUrl.replace(/\/$/, '');
-    if (preferHls && infoHash) {
-      return `${clean}/gst/${infoHash}/master.m3u8?index=${fileIndex}`;
-    }
-    return `${clean}/stream?link=${encodeURIComponent(magnet)}&index=${fileIndex}&play`;
+  const clean = baseUrl.replace(/\/$/, '');
+  // TorrServer -gst build provides /gst/{hash}/master.m3u8?index={index}
+  if (preferHls && infoHash) {
+    return `${clean}/gst/${infoHash}/master.m3u8?index=${fileIndex}`;
   }
+  return `${clean}/stream?link=${encodeURIComponent(magnet)}&index=${fileIndex}&play`;
 }
 
 export function TorrentPlayer({
@@ -138,8 +109,8 @@ export function TorrentPlayer({
   // Settings / TorrServer modal
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(() => getSettings());
+  const [serverConfig, setServerConfig] = useState<{ configured: boolean; publicUrl: string | null } | null>(null);
   const [torrServerInput, setTorrServerInput] = useState('');
-  const [torrServerAuthInput, setTorrServerAuthInput] = useState('');
   const [useTorrServerToggle, setUseTorrServerToggle] = useState(false);
   const [videoPlaybackError, setVideoPlaybackError] = useState<string | null>(null);
 
@@ -149,14 +120,28 @@ export function TorrentPlayer({
 
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Load initial settings
+  // Load initial settings & query server-side central TorrServer configuration
   useEffect(() => {
+    // 1. Fetch server-configured TorrServer (single source of truth for all visitors)
+    fetch('/api/torrent/torrserver')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.configured && data?.publicUrl) {
+          setServerConfig(data);
+        }
+      })
+      .catch(() => {});
+
+    // 2. Load user's local override settings
     const s = getSettings();
     setSettings(s);
     setTorrServerInput(s.torrServerUrl);
-    setTorrServerAuthInput(s.torrServerAuth || '');
     setUseTorrServerToggle(s.useTorrServer);
   }, []);
+
+  // Central server configuration takes precedence so new visitors/friends have TorrServer active out of the box!
+  const isTorrServerActive = Boolean(serverConfig?.configured || settings.useTorrServer);
+  const effectiveTorrServerUrl = serverConfig?.publicUrl || (settings.useTorrServer ? settings.torrServerUrl : '');
 
   const isMp4Release = (tTitle: string) => {
     return /(кпк|mp4|avc|iphone|ipad|android|h\.264|web-dlrip-avc|hdtvrip-avc)/i.test(tTitle);
@@ -166,7 +151,7 @@ export function TorrentPlayer({
     (t) => isMp4Release(t.title) && t.magnet !== magnet
   );
 
-  // Reset state when magnet changes
+  // Reset state when magnet or active server changes
   useEffect(() => {
     setStatus(null);
     infoHashRef.current = null;
@@ -176,7 +161,7 @@ export function TorrentPlayer({
     setBackendError(null);
     setVideoPlaybackError(null);
     setElapsedSeconds(0);
-  }, [magnet, settings.useTorrServer, settings.torrServerUrl]);
+  }, [magnet, isTorrServerActive, effectiveTorrServerUrl]);
 
   // Track elapsed seconds while waiting for metadata
   useEffect(() => {
@@ -199,13 +184,12 @@ export function TorrentPlayer({
 
       try {
         let res: Response;
-        if (settings.useTorrServer && settings.torrServerUrl) {
+        if (isTorrServerActive && effectiveTorrServerUrl) {
           res = await fetch('/api/torrent/torrserver', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              torrServerUrl: settings.torrServerUrl,
-              torrServerAuth: settings.torrServerAuth,
+              torrServerUrl: effectiveTorrServerUrl,
               magnet,
               hash: infoHashRef.current || undefined
             })
@@ -216,8 +200,8 @@ export function TorrentPlayer({
 
         if (!res.ok) {
           const errData = await res.json().catch(() => ({}));
-          if (isMounted && settings.useTorrServer) {
-            setBackendError(`TorrServer (${settings.torrServerUrl}): ${errData.error || res.statusText}`);
+          if (isMounted && isTorrServerActive) {
+            setBackendError(`TorrServer (${effectiveTorrServerUrl}): ${errData.error || res.statusText}`);
           }
           return;
         }
@@ -258,8 +242,8 @@ export function TorrentPlayer({
           }
         }
       } catch (err: any) {
-        if (isMounted && settings.useTorrServer) {
-          setBackendError(`Не удалось связаться с TorrServer (${settings.torrServerUrl})`);
+        if (isMounted && isTorrServerActive) {
+          setBackendError(`Не удалось связаться с TorrServer (${effectiveTorrServerUrl})`);
         }
         console.error('Status poll error:', err);
       } finally {
@@ -282,9 +266,8 @@ export function TorrentPlayer({
     isIOS,
     season,
     episode,
-    settings.useTorrServer,
-    settings.torrServerUrl,
-    settings.torrServerAuth
+    isTorrServerActive,
+    effectiveTorrServerUrl
   ]);
 
   // Update selected file if season or episode changes
@@ -483,12 +466,11 @@ export function TorrentPlayer({
 
   const isHlsMode = isIOS && !useHlsFallback && Boolean(status?.infoHash || infoHashRef.current);
 
-  const streamSrc = settings.useTorrServer && settings.torrServerUrl
+  const streamSrc = isTorrServerActive && effectiveTorrServerUrl
     ? buildTorrServerStreamUrl({
-        baseUrl: settings.torrServerUrl,
+        baseUrl: effectiveTorrServerUrl,
         magnet,
         fileIndex: selectedFileIndex,
-        auth: settings.torrServerAuth,
         infoHash: status?.infoHash || infoHashRef.current,
         preferHls: isIOS && !useHlsFallback
       })
@@ -522,7 +504,6 @@ export function TorrentPlayer({
   const handleSaveSettings = () => {
     saveSettings({
       torrServerUrl: torrServerInput.trim() || 'http://127.0.0.1:8090',
-      torrServerAuth: torrServerAuthInput.trim(),
       useTorrServer: useTorrServerToggle
     });
     setSettings(getSettings());
@@ -555,7 +536,7 @@ export function TorrentPlayer({
         onError={() => {
           const err = videoRef.current?.error;
           // If iOS tried HLS first and failed (e.g. TorrServer instance without GStreamer), auto-fallback to direct HTTP stream
-          if (isIOS && !useHlsFallback && settings.useTorrServer) {
+          if (isIOS && !useHlsFallback && isTorrServerActive) {
             setUseHlsFallback(true);
             return;
           }
@@ -616,7 +597,7 @@ export function TorrentPlayer({
           <span className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full bg-red-600/30 text-red-400 font-semibold border border-red-500/30 backdrop-blur-md text-[11px] sm:text-xs">
             <Radio className="w-3 h-3 sm:w-3.5 sm:h-3.5 animate-pulse text-red-500" />
             <span>
-              {settings.useTorrServer
+              {isTorrServerActive
                 ? isHlsMode
                   ? 'TorrServer HLS'
                   : 'TorrServer'
@@ -901,11 +882,25 @@ export function TorrentPlayer({
             </div>
 
             <div className="space-y-3 text-xs">
+              {serverConfig?.configured && (
+                <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs">
+                  <div className="font-bold flex items-center gap-1.5 text-white">
+                    <Check className="w-4 h-4 text-emerald-400" /> Серверный TorrServer активен
+                  </div>
+                  <div className="font-mono text-[11px] text-gray-300 mt-1 truncate">
+                    {serverConfig.publicUrl}
+                  </div>
+                  <div className="text-[10px] text-emerald-400 mt-1">
+                    Подключение настроено в Vercel. Все гости сайта и устройства смотрят через него автоматически.
+                  </div>
+                </div>
+              )}
+
               <label className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10 cursor-pointer">
                 <div>
-                  <div className="text-white font-semibold">Использовать TorrServer</div>
+                  <div className="text-white font-semibold">Собственный адрес TorrServer</div>
                   <div className="text-gray-400 text-[11px]">
-                    Для прямого 4K воспроизведения без ограничений сервера
+                    Для локального сервера на вашем компьютере или в домашней сети
                   </div>
                 </div>
                 <input
@@ -931,22 +926,6 @@ export function TorrentPlayer({
                     />
                     <p className="text-[11px] text-gray-500 mt-1">
                       По умолчанию: http://127.0.0.1:8090 (или https://ваш-хост:8090)
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="block text-gray-300 font-medium mb-1">
-                      Авторизация TorrServer (необязательно):
-                    </label>
-                    <input
-                      type="password"
-                      value={torrServerAuthInput}
-                      onChange={(e) => setTorrServerAuthInput(e.target.value)}
-                      placeholder="логин:пароль или токен"
-                      className="w-full bg-black/60 border border-white/15 rounded-xl px-3 py-2 text-white font-mono focus:outline-none focus:border-amber-400 text-xs"
-                    />
-                    <p className="text-[11px] text-gray-500 mt-1">
-                      Если на сервере включена HTTP Basic Auth
                     </p>
                   </div>
                 </div>

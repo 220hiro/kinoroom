@@ -199,7 +199,7 @@ export async function getOrAddTorrent(torrentId: string): Promise<any> {
       };
       existing.once('metadata', done);
       existing.once('ready', done);
-      setTimeout(done, 8000);
+      setTimeout(done, 12000);
     });
   }
 
@@ -230,7 +230,7 @@ export async function getOrAddTorrent(torrentId: string): Promise<any> {
         console.error('Torrent error:', err);
       });
 
-      setTimeout(done, 8000);
+      setTimeout(done, 12000);
     } catch (err) {
       reject(err);
     }

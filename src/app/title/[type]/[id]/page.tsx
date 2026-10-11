@@ -51,8 +51,8 @@ export default function TitlePage({ params }: TitlePageProps) {
   const [selectedSeason, setSelectedSeason] = useState(1);
   const [selectedEpisode, setSelectedEpisode] = useState(1);
 
-  // Streaming player state (online player default for instant cross-device playback)
-  const [activeTab, setActiveTab] = useState<'online' | 'torrent'>('online');
+  // Streaming player state (torrent player default without ads)
+  const [activeTab, setActiveTab] = useState<'online' | 'torrent'>('torrent');
   const [bookmarked, setBookmarked] = useState(false);
   const [isPlayerOpen, setIsPlayerOpen] = useState(false);
 
@@ -115,16 +115,26 @@ export default function TitlePage({ params }: TitlePageProps) {
       const res = await fetch(`/api/torrent/search?${params.toString()}`);
       if (res.ok) {
         const data: TorrentSearchResult[] = await res.json();
+        const isAppleDevice = typeof navigator !== 'undefined' && (
+          /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+          (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+        );
+
+        if (isAppleDevice) {
+          // Sort MP4 releases to the top on Apple devices for seamless mobile playback
+          data.sort((a, b) => {
+            const aMp4 = isMp4Release(a.title) ? 1 : 0;
+            const bMp4 = isMp4Release(b.title) ? 1 : 0;
+            if (aMp4 !== bMp4) return bMp4 - aMp4;
+            return b.seeds - a.seeds;
+          });
+        }
+
         setTorrents(data);
         if (data.length > 0) {
+          const mp4Candidate = data.find((d) => isMp4Release(d.title));
           setSelectedMagnet((prev) => {
-            const isAppleDevice = typeof navigator !== 'undefined' && (
-              /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-              (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
-            );
-            const mp4Candidate = data.find((d) => isMp4Release(d.title));
-
-            // On Apple devices (iPhone/iPad Safari), always select MP4 release unless user explicitly chose another MP4
+            // On Apple devices, always select MP4 release if available
             if (isAppleDevice && mp4Candidate) {
               const currentTitle = data.find((d) => d.magnet === prev)?.title || '';
               if (!prev || !isMp4Release(currentTitle)) {
@@ -133,7 +143,7 @@ export default function TitlePage({ params }: TitlePageProps) {
             }
 
             if (prev && data.some((d) => d.magnet === prev)) return prev;
-            return mp4Candidate ? mp4Candidate.magnet : data[0].magnet;
+            return (isAppleDevice && mp4Candidate) ? mp4Candidate.magnet : data[0].magnet;
           });
         }
       }

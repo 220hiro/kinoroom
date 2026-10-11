@@ -63,8 +63,6 @@ export function TorrentPlayer({
   const [showControls, setShowControls] = useState(true);
   const [isLoadingMetadata, setIsLoadingMetadata] = useState(true);
   const [hasStartedPlaying, setHasStartedPlaying] = useState(false);
-  const [showSlowPeerTip, setShowSlowPeerTip] = useState(false);
-  const [videoError, setVideoError] = useState<string | null>(null);
 
   const isIOS = typeof navigator !== 'undefined' && (
     /iPad|iPhone|iPod/.test(navigator.userAgent) ||
@@ -98,14 +96,6 @@ export function TorrentPlayer({
     setUseTorrServerToggle(s.useTorrServer);
   }, []);
 
-  // Slow peer connection fallback timeout
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setShowSlowPeerTip(true);
-    }, 6000);
-    return () => clearTimeout(timer);
-  }, []);
-
   const isMp4Release = (tTitle: string) => {
     return /(кпк|mp4|avc|iphone|ipad|android|h\.264|web-dlrip-avc|hdtvrip-avc)/i.test(tTitle);
   };
@@ -116,11 +106,9 @@ export function TorrentPlayer({
 
   // Reset state when magnet changes
   useEffect(() => {
-    setVideoError(null);
     setStatus(null);
     setIsLoadingMetadata(true);
     setHasStartedPlaying(false);
-    setShowSlowPeerTip(false);
   }, [magnet]);
 
   // Poll torrent status
@@ -163,13 +151,6 @@ export function TorrentPlayer({
               }
             }
 
-            // Proactively check if file format is unsupported on iOS Safari (.avi / .mkv)
-            const targetFile = data.files.find((f) => f.index === targetIdx);
-            if (isIOS && targetFile && /\.(avi|mkv|wmv)$/i.test(targetFile.name)) {
-              setVideoError(`Файл «${targetFile.name}» не поддерживается браузером Safari на iPhone.`);
-            } else {
-              setVideoError(null);
-            }
           }
         }
       } catch (err) {
@@ -207,17 +188,6 @@ export function TorrentPlayer({
       setSelectedFileIndex(matchedFile.index);
     }
   }, [season, episode, status]);
-
-  // Check format support whenever selectedFileIndex changes
-  useEffect(() => {
-    if (!status?.ready || !status?.files?.length) return;
-    const targetFile = status.files.find((f) => f.index === selectedFileIndex);
-    if (isIOS && targetFile && /\.(avi|mkv|wmv)$/i.test(targetFile.name)) {
-      setVideoError(`Файл «${targetFile.name}» не поддерживается браузером Safari на iPhone.`);
-    } else {
-      setVideoError(null);
-    }
-  }, [selectedFileIndex, status, isIOS]);
 
   // Check initial resume time
   useEffect(() => {
@@ -391,10 +361,15 @@ export function TorrentPlayer({
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  // Determine stream source: either internal proxy or TorrServer
   const streamSrc = settings.useTorrServer && settings.torrServerUrl
     ? `${settings.torrServerUrl.replace(/\/$/, '')}/stream?link=${encodeURIComponent(magnet)}&index=${selectedFileIndex}&play`
     : `/api/torrent/stream?torrent=${encodeURIComponent(magnet)}&file=${selectedFileIndex}`;
+
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.load();
+    }
+  }, [streamSrc]);
 
   const getFullStreamUrl = () => {
     if (typeof window === 'undefined') return streamSrc;
@@ -434,33 +409,24 @@ export function TorrentPlayer({
       {/* Native Video Element */}
       <video
         ref={videoRef}
-        src={status?.ready ? streamSrc : undefined}
+        src={streamSrc}
         onTimeUpdate={handleTimeUpdate}
         onPlay={() => {
           setIsPlaying(true);
-          setVideoError(null);
         }}
         onPause={() => setIsPlaying(false)}
         onWaiting={() => setIsLoadingMetadata(true)}
         onPlaying={() => {
           setIsLoadingMetadata(false);
           setHasStartedPlaying(true);
-          setVideoError(null);
         }}
         onError={() => {
-          const err = videoRef.current?.error;
-          let msg = 'Формат видео не поддерживается данным браузером.';
-          if (err?.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
-            msg = 'Формат файла (.mkv / .avi) не поддерживается плеером вашего браузера на iPhone.';
-          } else if (err?.code === MediaError.MEDIA_ERR_NETWORK) {
-            msg = 'Сетевая ошибка при загрузке торрент-потока.';
-          }
-          setVideoError(msg);
           setIsLoadingMetadata(false);
         }}
         onClick={togglePlay}
         className="w-full h-full object-contain cursor-pointer"
         playsInline
+        preload="auto"
       />
 
       {/* Floating Resume Notification Banner */}
@@ -594,135 +560,25 @@ export function TorrentPlayer({
         </div>
       </div>
 
-      {/* Center Buffering Spinner */}
-      {isLoadingMetadata && !hasStartedPlaying && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/85 backdrop-blur-sm gap-2.5 z-10 px-4 text-center overflow-y-auto py-4">
-          <Loader2 className="w-8 h-8 sm:w-10 sm:h-10 text-red-500 animate-spin shrink-0" />
-          <h4 className="text-sm sm:text-base font-semibold text-white">Подключение к пирам...</h4>
-          <p className="text-[11px] sm:text-xs text-gray-400 max-w-sm">
-            Загрузка первых блоков видеопотока. Обычно занимает от 5 до 15 секунд в зависимости от сидов.
-          </p>
-          {status && (
-            <div className="flex items-center gap-3 text-[11px] sm:text-xs text-gray-300 mt-0.5 bg-white/5 px-3 py-1 rounded-full border border-white/10">
-              <span>Сиды/Пиры: {status.numPeers}</span>
-              <span>Скорость: {formatBytes(status.downloadSpeed)}/с</span>
-            </div>
-          )}
-
-          {/* Quick Fallback Buttons if connecting takes > 6 seconds */}
-          {showSlowPeerTip && (
-            <div className="mt-2 p-3 bg-[#12141f] border border-amber-500/40 rounded-2xl max-w-sm w-full text-center space-y-2 shadow-2xl animate-fade-in shrink-0">
-              <div className="text-xs text-amber-300 font-bold flex items-center justify-center gap-1.5">
-                <span>⚡ Пиры долго подключаются?</span>
-              </div>
-              <p className="text-[10px] sm:text-[11px] text-gray-400">
-                В облачном режиме скорость поиска пиров может зависеть от трекера:
-              </p>
-              <div className="flex flex-col gap-1.5">
-                {onSwitchToOnline && (
-                  <button
-                    onClick={onSwitchToOnline}
-                    className="w-full px-3 py-2 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl shadow-lg transition-transform hover:scale-102 cursor-pointer flex items-center justify-center gap-1.5"
-                  >
-                    <span>⚡ Включить Онлайн-плееры (Мгновенно)</span>
-                  </button>
-                )}
-                <div className="flex gap-2">
-                  <a
-                    href={`vlc://${getFullStreamUrl()}`}
-                    className="flex-1 px-2.5 py-1.5 bg-white/10 hover:bg-white/20 text-white font-medium text-[11px] rounded-lg transition-colors text-center block"
-                  >
-                    Открыть в VLC
-                  </a>
-                  <button
-                    onClick={handleDownloadM3u}
-                    className="flex-1 px-2.5 py-1.5 bg-white/10 hover:bg-white/20 text-emerald-300 font-medium text-[11px] rounded-lg transition-colors text-center cursor-pointer"
-                  >
-                    Скачать .m3u
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Video Error / Unsupported Format Fallback Overlay */}
-      {videoError && (
-        <div className="absolute inset-0 bg-black/95 backdrop-blur-md z-30 flex flex-col items-center justify-center p-4 text-center space-y-2.5 animate-fade-in overflow-y-auto max-h-full">
-          <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center shrink-0">
-            <Radio className="w-5 h-5 sm:w-6 sm:h-6 animate-pulse" />
-          </div>
-
-          <div className="space-y-1 max-w-sm">
-            <h3 className="text-sm sm:text-base font-bold text-white">
-              {isIOS ? 'Safari на iPhone не поддерживает этот файл' : 'Не удалось воспроизвести данный поток'}
-            </h3>
-            <p className="text-[11px] sm:text-xs text-gray-300">
-              {isIOS
-                ? 'Эта раздача в формате .avi / .mkv, который Safari не открывает в HTML5. Выберите решение для торрента:'
-                : (videoError || 'Ошибка воспроизведения торрент-потока в браузере.')}
-            </p>
-          </div>
-
-          <div className="flex flex-col gap-2 w-full max-w-xs">
-            {mp4Alternative && onSelectTorrent && (
-              <button
-                onClick={() => {
-                  setVideoError(null);
-                  setIsLoadingMetadata(true);
-                  onSelectTorrent(mp4Alternative.magnet);
-                }}
-                className="w-full px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-lg transition-transform hover:scale-102 cursor-pointer flex items-center justify-center gap-2"
-              >
-                <Sparkles className="w-4 h-4 text-amber-300" />
-                <span>📱 Включить раздачу MP4 (для iPhone)</span>
-              </button>
-            )}
-
-            <div className="flex gap-2">
-              <a
-                href={`vlc://${getFullStreamUrl()}`}
-                className="flex-1 px-2.5 py-2 bg-white/10 hover:bg-white/20 text-white font-medium text-xs rounded-xl transition-colors text-center block"
-              >
-                В VLC
-              </a>
-              <a
-                href={`outplayer://${getFullStreamUrl()}`}
-                className="flex-1 px-2.5 py-2 bg-white/10 hover:bg-white/20 text-sky-300 font-medium text-xs rounded-xl transition-colors text-center block"
-              >
-                В Outplayer
-              </a>
-              <button
-                onClick={handleDownloadM3u}
-                className="px-3 py-2 bg-white/10 hover:bg-white/20 text-emerald-300 font-medium text-xs rounded-xl transition-colors text-center cursor-pointer"
-                title="Скачать плейлист .m3u"
-              >
-                .m3u
-              </button>
-            </div>
-
-            {onSwitchToOnline && (
-              <button
-                onClick={onSwitchToOnline}
-                className="w-full px-3 py-1.5 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white font-medium text-[11px] rounded-lg transition-colors cursor-pointer"
-              >
-                Или открыть Онлайн-плееры
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Big Play Overlay (when paused) */}
-      {!isPlaying && !isLoadingMetadata && (
-        <div
+      {/* Center Big Play Button (when paused) */}
+      {!isPlaying && (
+        <button
+          type="button"
           onClick={togglePlay}
-          className="absolute inset-0 flex items-center justify-center bg-black/30 cursor-pointer"
+          className="absolute inset-0 z-20 flex items-center justify-center bg-black/40 hover:bg-black/30 transition-colors cursor-pointer group"
+          aria-label="Воспроизвести"
         >
-          <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-red-600/90 text-white flex items-center justify-center shadow-2xl hover:scale-110 transition-transform">
+          <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-red-600 hover:bg-red-500 text-white flex items-center justify-center shadow-2xl group-hover:scale-110 transition-transform">
             <Play className="w-8 h-8 sm:w-10 sm:h-10 fill-current ml-1" />
           </div>
+        </button>
+      )}
+
+      {/* Sleek Buffering Indicator (when playing and waiting for data) */}
+      {isLoadingMetadata && isPlaying && (
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/50 pointer-events-none gap-2">
+          <Loader2 className="w-8 h-8 sm:w-10 sm:h-10 text-red-500 animate-spin" />
+          <span className="text-xs text-white/90 font-medium">Буферизация...</span>
         </div>
       )}
 
@@ -925,6 +781,29 @@ export function TorrentPlayer({
         </div>
       )}
       </div>
+
+      {/* Subtle non-blocking hint for non-MP4 releases on iOS */}
+      {isIOS && status?.files && (() => {
+        const currentFile = status.files.find((f) => f.index === selectedFileIndex);
+        if (currentFile && /\.(avi|mkv|wmv)$/i.test(currentFile.name)) {
+          return (
+            <div className="flex items-center justify-between gap-2 px-3.5 py-2.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-300">
+              <span className="truncate">
+                ⚠️ Формат .{currentFile.name.split('.').pop()?.toLowerCase()} может не открыться в Safari.
+              </span>
+              {mp4Alternative && onSelectTorrent && (
+                <button
+                  onClick={() => onSelectTorrent(mp4Alternative.magnet)}
+                  className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg transition-colors cursor-pointer text-xs shrink-0"
+                >
+                  📱 Включить MP4
+                </button>
+              )}
+            </div>
+          );
+        }
+        return null;
+      })()}
 
       {/* Episodes Playlist row if multi-file */}
       {status && status.files.filter((f) => f.isVideo).length > 1 && (

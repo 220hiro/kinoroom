@@ -29,9 +29,13 @@ function nodeToWebStream(nodeStream: any): ReadableStream {
   return new ReadableStream({
     start(controller) {
       nodeStream.on('data', (chunk: any) => {
-        controller.enqueue(chunk);
-        if (controller.desiredSize !== null && controller.desiredSize <= 0) {
-          nodeStream.pause?.();
+        try {
+          controller.enqueue(chunk);
+          if (controller.desiredSize !== null && controller.desiredSize <= 0) {
+            nodeStream.pause?.();
+          }
+        } catch {
+          // Stream closed by client
         }
       });
       nodeStream.on('end', () => {
@@ -60,7 +64,14 @@ export async function GET(request: NextRequest) {
     const fileIndexParam = request.nextUrl.searchParams.get('file');
     const fileIndex = fileIndexParam !== null ? parseInt(fileIndexParam, 10) : undefined;
 
-    const torrent = await getOrAddTorrent(torrentId);
+    let torrent = await getOrAddTorrent(torrentId);
+    let attempts = 0;
+    while ((!torrent || !torrent.files || torrent.files.length === 0) && attempts < 10) {
+      await new Promise((r) => setTimeout(r, 1000));
+      attempts++;
+      torrent = await getOrAddTorrent(torrentId);
+    }
+
     if (!torrent || !torrent.files || torrent.files.length === 0) {
       return new Response('Torrent metadata not available yet. Please retry in a few seconds.', { status: 503 });
     }

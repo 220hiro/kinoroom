@@ -51,8 +51,8 @@ export default function TitlePage({ params }: TitlePageProps) {
   const [selectedSeason, setSelectedSeason] = useState(1);
   const [selectedEpisode, setSelectedEpisode] = useState(1);
 
-  // Streaming player state
-  const [activeTab, setActiveTab] = useState<'online' | 'torrent'>('torrent');
+  // Streaming player state (online player default for instant cross-device playback)
+  const [activeTab, setActiveTab] = useState<'online' | 'torrent'>('online');
   const [bookmarked, setBookmarked] = useState(false);
   const [isPlayerOpen, setIsPlayerOpen] = useState(false);
 

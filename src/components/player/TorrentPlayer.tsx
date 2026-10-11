@@ -56,6 +56,12 @@ export function TorrentPlayer({
   const [isLoadingMetadata, setIsLoadingMetadata] = useState(true);
   const [hasStartedPlaying, setHasStartedPlaying] = useState(false);
   const [showSlowPeerTip, setShowSlowPeerTip] = useState(false);
+  const [videoError, setVideoError] = useState<string | null>(null);
+
+  const isIOS = typeof navigator !== 'undefined' && (
+    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+  );
 
   // Playback speed
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
@@ -335,14 +341,29 @@ export function TorrentPlayer({
       {/* Native Video Element */}
       <video
         ref={videoRef}
-        src={streamSrc}
+        src={status?.ready ? streamSrc : undefined}
         onTimeUpdate={handleTimeUpdate}
-        onPlay={() => setIsPlaying(true)}
+        onPlay={() => {
+          setIsPlaying(true);
+          setVideoError(null);
+        }}
         onPause={() => setIsPlaying(false)}
         onWaiting={() => setIsLoadingMetadata(true)}
         onPlaying={() => {
           setIsLoadingMetadata(false);
           setHasStartedPlaying(true);
+          setVideoError(null);
+        }}
+        onError={() => {
+          const err = videoRef.current?.error;
+          let msg = 'Формат видео не поддерживается данным браузером.';
+          if (err?.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
+            msg = 'Формат файла (.mkv / .avi) не поддерживается плеером вашего браузера на iPhone.';
+          } else if (err?.code === MediaError.MEDIA_ERR_NETWORK) {
+            msg = 'Сетевая ошибка при загрузке торрент-потока.';
+          }
+          setVideoError(msg);
+          setIsLoadingMetadata(false);
         }}
         onClick={togglePlay}
         className="w-full h-full object-contain cursor-pointer"
@@ -530,6 +551,52 @@ export function TorrentPlayer({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Video Error / Unsupported Format Fallback Overlay */}
+      {videoError && (
+        <div className="absolute inset-0 bg-black/95 backdrop-blur-md z-30 flex flex-col items-center justify-center p-5 text-center space-y-3.5 animate-fade-in overflow-y-auto">
+          <div className="w-12 h-12 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center shrink-0">
+            <Radio className="w-6 h-6 animate-pulse" />
+          </div>
+
+          <div className="space-y-1.5 max-w-sm">
+            <h3 className="text-sm sm:text-base font-bold text-white">
+              {isIOS ? 'Safari на iPhone не поддерживает этот формат' : 'Не удалось воспроизвести данный поток'}
+            </h3>
+            <p className="text-[11px] sm:text-xs text-gray-300">
+              {isIOS
+                ? 'Эта торрент-раздача упакована в формат .mkv / .avi, который Apple Safari не умеет воспроизводить напрямую в браузере. Для просмотра:'
+                : (videoError || 'Ошибка воспроизведения торрент-потока в браузере.')}
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-2 w-full max-w-xs">
+            {onSwitchToOnline && (
+              <button
+                onClick={onSwitchToOnline}
+                className="w-full px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl shadow-lg transition-transform hover:scale-102 cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <span>⚡ Включить Онлайн-плеер (Мгновенно)</span>
+              </button>
+            )}
+
+            <div className="flex gap-2">
+              <a
+                href={`vlc://${getFullStreamUrl()}`}
+                className="flex-1 px-3 py-2 bg-white/10 hover:bg-white/20 text-white font-medium text-xs rounded-xl transition-colors text-center block"
+              >
+                Запустить в VLC
+              </a>
+              <button
+                onClick={handleDownloadM3u}
+                className="flex-1 px-3 py-2 bg-white/10 hover:bg-white/20 text-emerald-300 font-medium text-xs rounded-xl transition-colors text-center cursor-pointer"
+              >
+                Скачать .m3u
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

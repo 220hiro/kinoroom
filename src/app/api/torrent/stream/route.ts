@@ -25,6 +25,31 @@ function getMimeType(filename: string): string {
   }
 }
 
+function nodeToWebStream(nodeStream: any): ReadableStream {
+  return new ReadableStream({
+    start(controller) {
+      nodeStream.on('data', (chunk: any) => {
+        controller.enqueue(chunk);
+        if (controller.desiredSize !== null && controller.desiredSize <= 0) {
+          nodeStream.pause?.();
+        }
+      });
+      nodeStream.on('end', () => {
+        try { controller.close(); } catch {}
+      });
+      nodeStream.on('error', (err: any) => {
+        try { controller.error(err); } catch {}
+      });
+    },
+    pull() {
+      nodeStream.resume?.();
+    },
+    cancel() {
+      nodeStream.destroy?.();
+    }
+  });
+}
+
 export async function GET(request: NextRequest) {
   try {
     const torrentId = request.nextUrl.searchParams.get('torrent');
@@ -68,7 +93,7 @@ export async function GET(request: NextRequest) {
 
       const chunkSize = end - start + 1;
       const nodeStream = file.createReadStream({ start, end });
-      const webStream = Readable.toWeb(nodeStream);
+      const webStream = nodeToWebStream(nodeStream);
 
       return new Response(webStream as any, {
         status: 206,
@@ -83,7 +108,7 @@ export async function GET(request: NextRequest) {
       });
     } else {
       const nodeStream = file.createReadStream();
-      const webStream = Readable.toWeb(nodeStream);
+      const webStream = nodeToWebStream(nodeStream);
 
       return new Response(webStream as any, {
         status: 200,

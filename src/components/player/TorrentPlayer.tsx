@@ -38,6 +38,61 @@ interface TorrentPlayerProps {
   onSelectTorrent?: (magnet: string) => void;
 }
 
+/**
+ * Builds an authenticated stream URL for TorrServer.
+ * Supports embedding Basic credentials in the URL for native HTML5 <video> elements
+ * and targeting GStreamer HLS master playlist for iOS Safari.
+ */
+function buildTorrServerStreamUrl({
+  baseUrl,
+  magnet,
+  fileIndex,
+  auth,
+  infoHash,
+  preferHls
+}: {
+  baseUrl: string;
+  magnet: string;
+  fileIndex: number;
+  auth?: string;
+  infoHash?: string | null;
+  preferHls?: boolean;
+}): string {
+  try {
+    const parsed = new URL(baseUrl);
+    if (auth && auth.trim()) {
+      let creds = auth.trim();
+      if (creds.toLowerCase().startsWith('basic ')) {
+        try {
+          creds = atob(creds.slice(6).trim());
+        } catch {}
+      }
+      if (creds.includes(':')) {
+        const colonIdx = creds.indexOf(':');
+        parsed.username = encodeURIComponent(creds.slice(0, colonIdx));
+        parsed.password = encodeURIComponent(creds.slice(colonIdx + 1));
+      }
+    }
+
+    const authHost = parsed.username
+      ? `${parsed.protocol}//${parsed.username}${parsed.password ? `:${parsed.password}` : ''}@${parsed.host}`
+      : `${parsed.protocol}//${parsed.host}`;
+
+    // TorrServer -gst build provides /gst/{hash}/master.m3u8?index={index}
+    if (preferHls && infoHash) {
+      return `${authHost}/gst/${infoHash}/master.m3u8?index=${fileIndex}`;
+    }
+
+    return `${authHost}/stream?link=${encodeURIComponent(magnet)}&index=${fileIndex}&play`;
+  } catch {
+    const clean = baseUrl.replace(/\/$/, '');
+    if (preferHls && infoHash) {
+      return `${clean}/gst/${infoHash}/master.m3u8?index=${fileIndex}`;
+    }
+    return `${clean}/stream?link=${encodeURIComponent(magnet)}&index=${fileIndex}&play`;
+  }
+}
+
 export function TorrentPlayer({
   magnet,
   initialFileIndex,
@@ -53,6 +108,8 @@ export function TorrentPlayer({
   const containerRef = useRef<HTMLDivElement>(null);
 
   const [status, setStatus] = useState<TorrentStatus | null>(null);
+  const infoHashRef = useRef<string | null>(null);
+  const [useHlsFallback, setUseHlsFallback] = useState(false);
   const [selectedFileIndex, setSelectedFileIndex] = useState<number>(initialFileIndex ?? 0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -112,6 +169,8 @@ export function TorrentPlayer({
   // Reset state when magnet changes
   useEffect(() => {
     setStatus(null);
+    infoHashRef.current = null;
+    setUseHlsFallback(false);
     setIsLoadingMetadata(true);
     setHasStartedPlaying(false);
     setBackendError(null);
@@ -131,8 +190,13 @@ export function TorrentPlayer({
   // Poll torrent status via appropriate backend (TorrServer or WebTorrent)
   useEffect(() => {
     let isMounted = true;
+    let pollTimer: NodeJS.Timeout | null = null;
+    let isFetching = false;
 
     async function checkStatus() {
+      if (!isMounted || isFetching) return;
+      isFetching = true;
+
       try {
         let res: Response;
         if (settings.useTorrServer && settings.torrServerUrl) {
@@ -143,7 +207,7 @@ export function TorrentPlayer({
               torrServerUrl: settings.torrServerUrl,
               torrServerAuth: settings.torrServerAuth,
               magnet,
-              hash: status?.infoHash
+              hash: infoHashRef.current || undefined
             })
           });
         } else {
@@ -160,12 +224,14 @@ export function TorrentPlayer({
 
         const data: TorrentStatus = await res.json();
         if (isMounted) {
+          if (data.infoHash) {
+            infoHashRef.current = data.infoHash;
+          }
           setBackendError(null);
           setStatus(data);
           if (data.ready && data.files.length > 0) {
             setIsLoadingMetadata(false);
             // Auto-select episode/file
-            let targetIdx = selectedFileIndex;
             if (initialFileIndex === undefined) {
               const videoFiles = data.files.filter((f) => f.isVideo);
               if (videoFiles.length > 0) {
@@ -187,7 +253,6 @@ export function TorrentPlayer({
                 }
                 const chosen = matchedFile || videoFiles[0];
                 setSelectedFileIndex(chosen.index);
-                targetIdx = chosen.index;
               }
             }
           }
@@ -197,17 +262,30 @@ export function TorrentPlayer({
           setBackendError(`Не удалось связаться с TorrServer (${settings.torrServerUrl})`);
         }
         console.error('Status poll error:', err);
+      } finally {
+        isFetching = false;
+        if (isMounted) {
+          pollTimer = setTimeout(checkStatus, 2500);
+        }
       }
     }
 
     checkStatus();
-    const interval = setInterval(checkStatus, 2500);
 
     return () => {
       isMounted = false;
-      clearInterval(interval);
+      if (pollTimer) clearTimeout(pollTimer);
     };
-  }, [magnet, initialFileIndex, isIOS, selectedFileIndex, season, episode, settings.useTorrServer, settings.torrServerUrl]);
+  }, [
+    magnet,
+    initialFileIndex,
+    isIOS,
+    season,
+    episode,
+    settings.useTorrServer,
+    settings.torrServerUrl,
+    settings.torrServerAuth
+  ]);
 
   // Update selected file if season or episode changes
   useEffect(() => {
@@ -403,10 +481,17 @@ export function TorrentPlayer({
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
+  const isHlsMode = isIOS && !useHlsFallback && Boolean(status?.infoHash || infoHashRef.current);
+
   const streamSrc = settings.useTorrServer && settings.torrServerUrl
-    ? isIOS
-      ? `${settings.torrServerUrl.replace(/\/$/, '')}/stream?link=${encodeURIComponent(magnet)}&index=${selectedFileIndex}&m3u`
-      : `${settings.torrServerUrl.replace(/\/$/, '')}/stream?link=${encodeURIComponent(magnet)}&index=${selectedFileIndex}&play`
+    ? buildTorrServerStreamUrl({
+        baseUrl: settings.torrServerUrl,
+        magnet,
+        fileIndex: selectedFileIndex,
+        auth: settings.torrServerAuth,
+        infoHash: status?.infoHash || infoHashRef.current,
+        preferHls: isIOS && !useHlsFallback
+      })
     : `/api/torrent/stream?torrent=${encodeURIComponent(magnet)}&file=${selectedFileIndex}`;
 
   useEffect(() => {
@@ -469,10 +554,16 @@ export function TorrentPlayer({
         }}
         onError={() => {
           const err = videoRef.current?.error;
+          // If iOS tried HLS first and failed (e.g. TorrServer instance without GStreamer), auto-fallback to direct HTTP stream
+          if (isIOS && !useHlsFallback && settings.useTorrServer) {
+            setUseHlsFallback(true);
+            return;
+          }
+
           let msg = 'Не удалось загрузить видеопоток.';
           if (err?.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
             msg = isIOS
-              ? 'Формат или аудиокодек не поддерживается Safari нативно в HTML5. Рекомендуется раздача с пометкой MP4 или запуск через VLC/Outplayer.'
+              ? 'Формат или аудиокодек не поддерживается Safari нативно в HTML5. Рекомендуется раздача с пометкой MP4 или запуск через Outplayer/VLC.'
               : 'Формат видео или аудиокодек не поддерживается данным браузером.';
           } else if (err?.code === MediaError.MEDIA_ERR_NETWORK) {
             msg = 'Сетевая ошибка при передаче видеопотока. Проверьте соединение с сервером.';
@@ -524,7 +615,13 @@ export function TorrentPlayer({
         <div className="flex items-center gap-1.5 sm:gap-3 flex-wrap">
           <span className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full bg-red-600/30 text-red-400 font-semibold border border-red-500/30 backdrop-blur-md text-[11px] sm:text-xs">
             <Radio className="w-3 h-3 sm:w-3.5 sm:h-3.5 animate-pulse text-red-500" />
-            <span>{settings.useTorrServer ? 'TorrServer' : 'Торрент-поток'}</span>
+            <span>
+              {settings.useTorrServer
+                ? isHlsMode
+                  ? 'TorrServer HLS'
+                  : 'TorrServer'
+                : 'Торрент-поток'}
+            </span>
           </span>
 
           {status && (
@@ -582,6 +679,15 @@ export function TorrentPlayer({
                   onClick={() => setShowExternalMenu(false)}
                 />
                 <div className="absolute right-0 top-full mt-2 w-48 sm:w-52 max-w-[calc(100vw-32px)] bg-[#12141f] border border-white/15 rounded-xl shadow-2xl p-2 z-30 space-y-1">
+                  {isIOS && (
+                    <a
+                      href={`outplayer://${getFullStreamUrl()}`}
+                      className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-white/10 text-xs text-purple-300 hover:text-white flex items-center justify-between transition-colors block"
+                    >
+                      <span>Запустить в Outplayer</span>
+                      <span className="text-[10px] text-purple-400 font-mono">outplayer://</span>
+                    </a>
+                  )}
                   <a
                     href={`vlc://${getFullStreamUrl()}`}
                     className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-white/10 text-xs text-gray-200 hover:text-white flex items-center justify-between transition-colors block"

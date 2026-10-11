@@ -6,23 +6,63 @@ export const dynamic = 'force-dynamic';
 const VIDEO_EXT_REGEX = /\.(mp4|mkv|webm|avi|mov|m4v|ts|flv)$/i;
 
 /**
- * Validates target TorrServer URL to prevent SSRF against cloud internal metadata
+ * Validates public TorrServer URL to prevent SSRF against internal/private cloud infrastructure
  */
 function isValidTorrServerUrl(rawUrl: string): boolean {
   try {
     const parsed = new URL(rawUrl);
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
     const host = parsed.hostname.toLowerCase();
-    // Block cloud metadata & internal loopback services from public manipulation
+    const cleanHost = host.replace(/^\[|\]$/g, '');
+
+    // Block localhost, loopback, and undefined hosts
     if (
-      host === '169.254.169.254' ||
-      host === 'metadata.google.internal' ||
-      host === 'instance-data' ||
-      host.endsWith('.internal') ||
-      host.endsWith('.local')
+      cleanHost === 'localhost' ||
+      cleanHost === '127.0.0.1' ||
+      cleanHost === '0.0.0.0' ||
+      cleanHost === '::1' ||
+      cleanHost === '::' ||
+      cleanHost.endsWith('.localhost')
     ) {
       return false;
     }
+
+    // Block IPv6 link-local (fe80::/10), ULA (fc00::/7, fd00::/8), and IPv4-mapped (::ffff:)
+    if (
+      cleanHost.startsWith('fe80:') ||
+      cleanHost.startsWith('fc') ||
+      cleanHost.startsWith('fd') ||
+      cleanHost.startsWith('::ffff:')
+    ) {
+      return false;
+    }
+
+    // Block private/internal IPv4 ranges:
+    // 0.0.0.0/8, 10.0.0.0/8, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10
+    const ipv4Match = cleanHost.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (ipv4Match) {
+      const b0 = parseInt(ipv4Match[1], 10);
+      const b1 = parseInt(ipv4Match[2], 10);
+      if (b0 === 0 || b0 === 10 || b0 === 127) return false;
+      if (b0 === 169 && b1 === 254) return false;
+      if (b0 === 192 && b1 === 168) return false;
+      if (b0 === 172 && b1 >= 16 && b1 <= 31) return false;
+      if (b0 === 100 && b1 >= 64 && b1 <= 127) return false;
+    }
+
+    // Block cloud metadata & internal suffixes
+    if (
+      cleanHost === 'metadata.google.internal' ||
+      cleanHost === 'instance-data' ||
+      cleanHost.endsWith('.internal') ||
+      cleanHost.endsWith('.local') ||
+      cleanHost.endsWith('.corp') ||
+      cleanHost.endsWith('.home') ||
+      cleanHost.endsWith('.lan')
+    ) {
+      return false;
+    }
+
     return true;
   } catch {
     return false;
@@ -62,19 +102,29 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { torrServerUrl, torrServerAuth, magnet, hash } = body;
 
-    // Prioritize server environment variable if configured, otherwise validate user-provided URL
-    const targetUrl = (process.env.TORRSERVER_URL || torrServerUrl || '').trim();
-    const targetAuth = (process.env.TORRSERVER_AUTH || torrServerAuth || '').trim();
+    // Security policy:
+    // If TORRSERVER_URL is configured on server environment, lock exclusively to it and server-configured auth.
+    // Client cannot override target server URL when server has its own TORRSERVER_URL.
+    let targetUrl = '';
+    let targetAuth = '';
 
-    if (!targetUrl) {
-      return NextResponse.json({ error: 'Missing TorrServer URL' }, { status: 400 });
-    }
+    if (process.env.TORRSERVER_URL) {
+      targetUrl = process.env.TORRSERVER_URL.trim();
+      targetAuth = (process.env.TORRSERVER_AUTH || '').trim();
+    } else {
+      targetUrl = (torrServerUrl || '').trim();
+      targetAuth = (torrServerAuth || '').trim();
 
-    if (!isValidTorrServerUrl(targetUrl)) {
-      return NextResponse.json(
-        { error: 'Invalid or forbidden TorrServer URL (SSRF protection)' },
-        { status: 400 }
-      );
+      if (!targetUrl) {
+        return NextResponse.json({ error: 'Missing TorrServer URL' }, { status: 400 });
+      }
+
+      if (!isValidTorrServerUrl(targetUrl)) {
+        return NextResponse.json(
+          { error: 'Forbidden or private TorrServer URL. SSRF protection prevents accessing internal networks.' },
+          { status: 400 }
+        );
+      }
     }
 
     if (!magnet && !hash) {
@@ -101,7 +151,8 @@ export async function POST(request: NextRequest) {
           method: 'POST',
           headers,
           body: JSON.stringify({ action: 'get', hash }),
-          signal: AbortSignal.timeout(5000)
+          signal: AbortSignal.timeout(5000),
+          redirect: 'error' // Disallow SSRF redirect chains
         });
         if (getRes.ok) {
           torrData = await getRes.json();
@@ -121,7 +172,8 @@ export async function POST(request: NextRequest) {
           link: magnet,
           save_to_db: true
         }),
-        signal: AbortSignal.timeout(7000)
+        signal: AbortSignal.timeout(7000),
+        redirect: 'error' // Disallow SSRF redirect chains
       });
 
       if (!addRes.ok) {

@@ -54,6 +54,26 @@ export function detectTranslation(rawTitle: string): string | undefined {
   return undefined;
 }
 
+export const DEFAULT_TRACKERS = [
+  'udp://opentor.net:6969',
+  'udp://tracker.opentrackr.org:1337/announce',
+  'udp://open.stealth.si:80/announce',
+  'udp://tracker.torrent.eu.org:451/announce',
+  'udp://explodie.org:6969/announce',
+  'wss://tracker.openwebtorrent.com',
+  'wss://tracker.btorrent.xyz'
+];
+
+export function enrichMagnet(magnet: string): string {
+  let enriched = magnet;
+  for (const tr of DEFAULT_TRACKERS) {
+    if (!enriched.includes(encodeURIComponent(tr)) && !enriched.includes(tr)) {
+      enriched += `&tr=${encodeURIComponent(tr)}`;
+    }
+  }
+  return enriched;
+}
+
 async function fetchFromRutor(query: string): Promise<TorrentSearchResult[]> {
   const clean = cleanTorrentQuery(query);
   if (!clean) return [];
@@ -102,10 +122,11 @@ async function fetchFromRutor(query: string): Promise<TorrentSearchResult[]> {
           else if (/web-dl|webrip/i.test(rawTitle)) quality = 'WEB-DL';
 
           const translation = detectTranslation(rawTitle);
+          const magnet = enrichMagnet(magnetMatch[1]);
 
           results.push({
             title: rawTitle,
-            magnet: magnetMatch[1],
+            magnet,
             size,
             seeds,
             peers,
@@ -160,37 +181,56 @@ export async function searchTorrents(query: string, originalTitle?: string): Pro
  */
 export async function getOrAddTorrent(torrentId: string): Promise<any> {
   const client = await getWebTorrentClient();
+  const formattedId = torrentId.startsWith('magnet:') ? enrichMagnet(torrentId) : torrentId;
 
   // Check if already present in client
-  const existing = client.get(torrentId);
+  const existing = (await client.get(torrentId)) || (formattedId !== torrentId ? await client.get(formattedId) : null);
   if (existing) {
-    if (existing.files && existing.files.length > 0) return existing;
+    if (existing.ready || (existing.files && existing.files.length > 0)) {
+      return existing;
+    }
     return new Promise((resolve) => {
-      existing.once('metadata', () => resolve(existing));
-      existing.once('ready', () => resolve(existing));
-      setTimeout(() => resolve(existing), 10000);
+      let resolved = false;
+      const done = () => {
+        if (!resolved) {
+          resolved = true;
+          resolve(existing);
+        }
+      };
+      existing.once('metadata', done);
+      existing.once('ready', done);
+      setTimeout(done, 8000);
     });
   }
 
   return new Promise((resolve, reject) => {
     try {
-      const torrent = client.add(torrentId, {
+      const torrent = client.add(formattedId, {
         path: TEMP_DOWNLOAD_DIR,
         destroyStoreOnDestroy: true,
       });
 
-      const onReady = () => resolve(torrent);
-      torrent.once('metadata', onReady);
-      torrent.once('ready', onReady);
+      if (torrent.ready || (torrent.files && torrent.files.length > 0)) {
+        resolve(torrent);
+        return;
+      }
+
+      let resolved = false;
+      const done = () => {
+        if (!resolved) {
+          resolved = true;
+          resolve(torrent);
+        }
+      };
+
+      torrent.once('metadata', done);
+      torrent.once('ready', done);
 
       torrent.on('error', (err: any) => {
         console.error('Torrent error:', err);
       });
 
-      setTimeout(() => {
-        // Return torrent anyway even if metadata is still pending
-        resolve(torrent);
-      }, 15000);
+      setTimeout(done, 8000);
     } catch (err) {
       reject(err);
     }

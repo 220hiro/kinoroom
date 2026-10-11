@@ -454,6 +454,7 @@ export default function TitlePage({ params }: TitlePageProps) {
                   magnet={selectedMagnet}
                   initialTime={savedProgressTime ?? undefined}
                   onTimeUpdate={handleTimeUpdate}
+                  onSwitchToOnline={() => setActiveTab('online')}
                 />
               ) : (
                 <div className="w-full aspect-video bg-black/50 rounded-2xl border border-white/10 flex flex-col items-center justify-center p-6 text-center">

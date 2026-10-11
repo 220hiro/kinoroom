@@ -90,6 +90,14 @@ export function TorrentPlayer({
     setUseTorrServerToggle(s.useTorrServer);
   }, []);
 
+  // Slow peer connection fallback timeout
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setShowSlowPeerTip(true);
+    }, 6000);
+    return () => clearTimeout(timer);
+  }, []);
+
   // Poll torrent status
   useEffect(() => {
     let isMounted = true;
@@ -104,12 +112,20 @@ export function TorrentPlayer({
           if (data.ready && data.files.length > 0) {
             setIsLoadingMetadata(false);
             // Auto-select largest video if not set
+            let targetIdx = selectedFileIndex;
             if (initialFileIndex === undefined) {
               const videoFiles = data.files.filter((f) => f.isVideo);
               if (videoFiles.length > 0) {
                 const largest = videoFiles.reduce((p, c) => (c.length > p.length ? c : p));
                 setSelectedFileIndex(largest.index);
+                targetIdx = largest.index;
               }
+            }
+
+            // Proactively check if file format is unsupported on iOS Safari (.avi / .mkv)
+            const targetFile = data.files.find((f) => f.index === targetIdx);
+            if (isIOS && targetFile && /\.(avi|mkv|wmv)$/i.test(targetFile.name)) {
+              setVideoError(`Файл «${targetFile.name}» не поддерживается браузером Safari на iPhone.`);
             }
           }
         }
@@ -125,7 +141,18 @@ export function TorrentPlayer({
       isMounted = false;
       clearInterval(interval);
     };
-  }, [magnet, initialFileIndex]);
+  }, [magnet, initialFileIndex, isIOS, selectedFileIndex]);
+
+  // Check format support whenever selectedFileIndex changes
+  useEffect(() => {
+    if (!status?.ready || !status?.files?.length) return;
+    const targetFile = status.files.find((f) => f.index === selectedFileIndex);
+    if (isIOS && targetFile && /\.(avi|mkv|wmv)$/i.test(targetFile.name)) {
+      setVideoError(`Файл «${targetFile.name}» не поддерживается браузером Safari на iPhone.`);
+    } else {
+      setVideoError(null);
+    }
+  }, [selectedFileIndex, status, isIOS]);
 
   // Check initial resume time
   useEffect(() => {

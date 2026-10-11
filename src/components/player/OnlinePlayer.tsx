@@ -12,7 +12,7 @@ interface OnlinePlayerProps {
   title: string;
 }
 
-type ProviderKey = 'vidlink' | 'vidsrc_me' | 'vidsrc_to' | 'smashy' | 'twoembed';
+type ProviderKey = 'vidlink' | 'vidsrc_to' | 'vidsrc_sh' | 'multiembed' | 'twoembed' | 'anyembed';
 
 export function OnlinePlayer({
   tmdbId,
@@ -24,7 +24,7 @@ export function OnlinePlayer({
 }: OnlinePlayerProps) {
   const [provider, setProvider] = useState<ProviderKey>('vidlink');
   const [key, setKey] = useState(0);
-  const [blockAds, setBlockAds] = useState(true);
+  const [blockAds, setBlockAds] = useState(false);
 
   const idOrImdb = imdbId || tmdbId;
 
@@ -34,32 +34,37 @@ export function OnlinePlayer({
       type === 'tv'
         ? `https://vidlink.pro/tv/${tmdbId}/${season}/${episode}`
         : `https://vidlink.pro/movie/${tmdbId}`,
-    vidsrc_me:
-      type === 'tv'
-        ? `https://vidsrc.me/embed/tv?imdb=${imdbId || ''}&tmdb=${tmdbId}&season=${season}&episode=${episode}`
-        : `https://vidsrc.me/embed/movie?imdb=${imdbId || ''}&tmdb=${tmdbId}`,
     vidsrc_to:
       type === 'tv'
         ? `https://vidsrc.to/embed/tv/${idOrImdb}/${season}/${episode}`
         : `https://vidsrc.to/embed/movie/${idOrImdb}`,
-    smashy:
+    vidsrc_sh:
       type === 'tv'
-        ? `https://player.smashystream.com/tv/${tmdbId}?s=${season}&e=${episode}`
-        : `https://player.smashystream.com/movie/${tmdbId}`,
+        ? `https://vidsrc.sh/embed/tv?imdb=${imdbId || ''}&tmdb=${tmdbId}&season=${season}&episode=${episode}`
+        : `https://vidsrc.sh/embed/movie?imdb=${imdbId || ''}&tmdb=${tmdbId}`,
+    multiembed:
+      type === 'tv'
+        ? `https://multiembed.mov/?video_id=${idOrImdb}&tmdb=1&s=${season}&e=${episode}`
+        : `https://multiembed.mov/?video_id=${idOrImdb}&tmdb=1`,
     twoembed:
       type === 'tv'
-        ? `https://2embed.cc/embedtv/${idOrImdb}&s=${season}&e=${episode}`
-        : `https://2embed.cc/embed/${idOrImdb}`
+        ? `https://www.2embed.cc/embedtv/${tmdbId}&s=${season}&e=${episode}`
+        : `https://www.2embed.cc/embed/${tmdbId}`,
+    anyembed:
+      type === 'tv'
+        ? `https://anyembed.xyz/embed/tmdb-tv-${tmdbId}-${season}-${episode}`
+        : `https://anyembed.xyz/embed/tmdb-movie-${tmdbId}`
   };
 
   const currentUrl = urls[provider];
 
   const providersList = [
     { id: 'vidlink', name: 'VidLink PRO', badge: '1080p Рекомендуемый', desc: 'Быстрый поток с субтитрами' },
-    { id: 'vidsrc_me', name: 'VidSrc ME', badge: 'Мульти-сервер', desc: 'Автоматический выбор зеркала' },
     { id: 'vidsrc_to', name: 'VidSrc HD', badge: 'Стабильный', desc: 'Популярный мировой балансер' },
-    { id: 'smashy', name: 'SmashyStream', badge: 'Резерв', desc: 'Альтернативный плеер' },
-    { id: 'twoembed', name: '2Embed', badge: 'Запасной', desc: 'Быстрый легкий плеер' }
+    { id: 'vidsrc_sh', name: 'VidSrc Direct', badge: 'Прямой поток', desc: 'Без промежуточных редиректов' },
+    { id: 'multiembed', name: 'MultiEmbed', badge: 'Субтитры', desc: 'Мульти-дорожки и субтитры' },
+    { id: 'twoembed', name: '2Embed', badge: 'Легкий', desc: 'Быстрый легкий плеер' },
+    { id: 'anyembed', name: 'AnyEmbed', badge: 'Резерв', desc: 'Запасной сервер' }
   ] as const;
 
   return (
@@ -92,11 +97,11 @@ export function OnlinePlayer({
           {/* Anti-Ad Shield Toggle */}
           <button
             onClick={() => setBlockAds(!blockAds)}
-            title="Блокировать всплывающую рекламу и новые вкладки"
+            title="Блокировать всплывающую рекламу (внимание: на некоторых устройствах может ограничивать запуск видео)"
             className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer border ${
               blockAds
                 ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
-                : 'bg-red-500/10 border-red-500/30 text-red-400'
+                : 'bg-white/5 border-white/10 text-gray-400 hover:text-white'
             }`}
           >
             {blockAds ? (
@@ -131,25 +136,28 @@ export function OnlinePlayer({
         </div>
       </div>
 
-      {/* Responsive Iframe Container with Sandbox Anti-Ad */}
+      {/* Responsive Iframe Container */}
       <div className="relative w-full aspect-video bg-black rounded-2xl overflow-hidden border border-white/10 shadow-2xl">
         <iframe
           key={`${provider}-${key}-${season}-${episode}-${blockAds}`}
           src={currentUrl}
-          sandbox={blockAds ? 'allow-scripts allow-same-origin allow-forms allow-presentation' : undefined}
-          referrerPolicy="no-referrer"
+          sandbox={
+            blockAds
+              ? 'allow-scripts allow-same-origin allow-forms allow-presentation allow-popups-to-escape-sandbox'
+              : undefined
+          }
           allowFullScreen
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
           className="w-full h-full border-0"
         />
       </div>
 
       <div className="flex flex-col sm:flex-row items-center justify-between text-xs text-gray-400 gap-2">
         <span>
-          🛡️ <strong>Анти-реклама активна:</strong> браузер блокирует все всплывающие окна и переход на сайты букмекеров при клике.
+          💡 <strong>Совет:</strong> если видео на сервере не загружается, нажмите на другой сервер выше (VidLink, VidSrc HD, MultiEmbed).
         </span>
         <span className="text-gray-400">
-          Для 100% чистого видео без рекламы перейдите на вкладку <strong className="text-amber-400">«🧲 Торрент-стриминг»</strong>.
+          Для 100% чистого видео без рекламы перейдите на вкладку <strong className="text-amber-400">«🧲 Торренты»</strong>.
         </span>
       </div>
     </div>

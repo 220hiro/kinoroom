@@ -82,7 +82,9 @@ export function TorrentPlayer({
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(() => getSettings());
   const [torrServerInput, setTorrServerInput] = useState('');
+  const [torrServerAuthInput, setTorrServerAuthInput] = useState('');
   const [useTorrServerToggle, setUseTorrServerToggle] = useState(false);
+  const [videoPlaybackError, setVideoPlaybackError] = useState<string | null>(null);
 
   // Resume prompt state
   const [resumePromptTime, setResumePromptTime] = useState<number | null>(null);
@@ -95,6 +97,7 @@ export function TorrentPlayer({
     const s = getSettings();
     setSettings(s);
     setTorrServerInput(s.torrServerUrl);
+    setTorrServerAuthInput(s.torrServerAuth || '');
     setUseTorrServerToggle(s.useTorrServer);
   }, []);
 
@@ -112,6 +115,7 @@ export function TorrentPlayer({
     setIsLoadingMetadata(true);
     setHasStartedPlaying(false);
     setBackendError(null);
+    setVideoPlaybackError(null);
     setElapsedSeconds(0);
   }, [magnet, settings.useTorrServer, settings.torrServerUrl]);
 
@@ -137,7 +141,9 @@ export function TorrentPlayer({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               torrServerUrl: settings.torrServerUrl,
-              magnet
+              torrServerAuth: settings.torrServerAuth,
+              magnet,
+              hash: status?.infoHash
             })
           });
         } else {
@@ -398,7 +404,9 @@ export function TorrentPlayer({
   };
 
   const streamSrc = settings.useTorrServer && settings.torrServerUrl
-    ? `${settings.torrServerUrl.replace(/\/$/, '')}/stream?link=${encodeURIComponent(magnet)}&index=${selectedFileIndex}&play`
+    ? isIOS
+      ? `${settings.torrServerUrl.replace(/\/$/, '')}/stream?link=${encodeURIComponent(magnet)}&index=${selectedFileIndex}&m3u`
+      : `${settings.torrServerUrl.replace(/\/$/, '')}/stream?link=${encodeURIComponent(magnet)}&index=${selectedFileIndex}&play`
     : `/api/torrent/stream?torrent=${encodeURIComponent(magnet)}&file=${selectedFileIndex}`;
 
   useEffect(() => {
@@ -429,6 +437,7 @@ export function TorrentPlayer({
   const handleSaveSettings = () => {
     saveSettings({
       torrServerUrl: torrServerInput.trim() || 'http://127.0.0.1:8090',
+      torrServerAuth: torrServerAuthInput.trim(),
       useTorrServer: useTorrServerToggle
     });
     setSettings(getSettings());
@@ -449,14 +458,28 @@ export function TorrentPlayer({
         onTimeUpdate={handleTimeUpdate}
         onPlay={() => {
           setIsPlaying(true);
+          setVideoPlaybackError(null);
         }}
         onPause={() => setIsPlaying(false)}
         onWaiting={() => setIsLoadingMetadata(true)}
         onPlaying={() => {
           setIsLoadingMetadata(false);
           setHasStartedPlaying(true);
+          setVideoPlaybackError(null);
         }}
         onError={() => {
+          const err = videoRef.current?.error;
+          let msg = 'Не удалось загрузить видеопоток.';
+          if (err?.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
+            msg = isIOS
+              ? 'Формат или аудиокодек не поддерживается Safari нативно в HTML5. Рекомендуется раздача с пометкой MP4 или запуск через VLC/Outplayer.'
+              : 'Формат видео или аудиокодек не поддерживается данным браузером.';
+          } else if (err?.code === MediaError.MEDIA_ERR_NETWORK) {
+            msg = 'Сетевая ошибка при передаче видеопотока. Проверьте соединение с сервером.';
+          } else if (err?.code === MediaError.MEDIA_ERR_DECODE) {
+            msg = 'Ошибка декодирования видео.';
+          }
+          setVideoPlaybackError(msg);
           setIsLoadingMetadata(false);
         }}
         onClick={togglePlay}
@@ -788,20 +811,38 @@ export function TorrentPlayer({
               </label>
 
               {useTorrServerToggle && (
-                <div>
-                  <label className="block text-gray-300 font-medium mb-1">
-                    Адрес TorrServer (IP или localhost):
-                  </label>
-                  <input
-                    type="text"
-                    value={torrServerInput}
-                    onChange={(e) => setTorrServerInput(e.target.value)}
-                    placeholder="http://127.0.0.1:8090"
-                    className="w-full bg-black/60 border border-white/15 rounded-xl px-3 py-2 text-white font-mono focus:outline-none focus:border-amber-400"
-                  />
-                  <p className="text-[11px] text-gray-500 mt-1">
-                    По умолчанию: http://127.0.0.1:8090 (если запущен на вашем ПК или Smart TV)
-                  </p>
+                <div className="space-y-2">
+                  <div>
+                    <label className="block text-gray-300 font-medium mb-1">
+                      Адрес TorrServer (IP или домен):
+                    </label>
+                    <input
+                      type="text"
+                      value={torrServerInput}
+                      onChange={(e) => setTorrServerInput(e.target.value)}
+                      placeholder="http://127.0.0.1:8090"
+                      className="w-full bg-black/60 border border-white/15 rounded-xl px-3 py-2 text-white font-mono focus:outline-none focus:border-amber-400"
+                    />
+                    <p className="text-[11px] text-gray-500 mt-1">
+                      По умолчанию: http://127.0.0.1:8090 (или https://ваш-хост:8090)
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-gray-300 font-medium mb-1">
+                      Авторизация TorrServer (необязательно):
+                    </label>
+                    <input
+                      type="password"
+                      value={torrServerAuthInput}
+                      onChange={(e) => setTorrServerAuthInput(e.target.value)}
+                      placeholder="логин:пароль или токен"
+                      className="w-full bg-black/60 border border-white/15 rounded-xl px-3 py-2 text-white font-mono focus:outline-none focus:border-amber-400 text-xs"
+                    />
+                    <p className="text-[11px] text-gray-500 mt-1">
+                      Если на сервере включена HTTP Basic Auth
+                    </p>
+                  </div>
                 </div>
               )}
 
@@ -838,6 +879,25 @@ export function TorrentPlayer({
             className="px-2.5 py-1 bg-red-600 hover:bg-red-500 text-white font-bold rounded-lg transition-colors cursor-pointer text-xs shrink-0"
           >
             Настройки
+          </button>
+        </div>
+      )}
+
+      {/* Playback diagnostic error banner */}
+      {videoPlaybackError && (
+        <div className="flex items-center justify-between gap-2 px-3.5 py-2.5 bg-amber-500/15 border border-amber-500/30 rounded-xl text-xs text-amber-300">
+          <span className="truncate">⚠️ {videoPlaybackError}</span>
+          <button
+            onClick={() => {
+              setVideoPlaybackError(null);
+              if (videoRef.current) {
+                videoRef.current.load();
+                videoRef.current.play().catch(() => {});
+              }
+            }}
+            className="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-black font-bold rounded-lg transition-colors cursor-pointer text-xs shrink-0"
+          >
+            Повторить
           </button>
         </div>
       )}

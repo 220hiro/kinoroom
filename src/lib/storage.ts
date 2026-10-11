@@ -92,12 +92,14 @@ export function getWatchProgress(
 
 export type AppSettings = {
   torrServerUrl: string;
+  torrServerAuth?: string;
   useTorrServer: boolean;
   defaultExternalPlayer: 'vlc' | 'potplayer' | 'none';
 };
 
 const DEFAULT_SETTINGS: AppSettings = {
   torrServerUrl: 'http://127.0.0.1:8090',
+  torrServerAuth: '',
   useTorrServer: false,
   defaultExternalPlayer: 'none'
 };

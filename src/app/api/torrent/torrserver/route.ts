@@ -6,6 +6,30 @@ export const dynamic = 'force-dynamic';
 const VIDEO_EXT_REGEX = /\.(mp4|mkv|webm|avi|mov|m4v|ts|flv)$/i;
 
 /**
+ * Validates target TorrServer URL to prevent SSRF against cloud internal metadata
+ */
+function isValidTorrServerUrl(rawUrl: string): boolean {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+    const host = parsed.hostname.toLowerCase();
+    // Block cloud metadata & internal loopback services from public manipulation
+    if (
+      host === '169.254.169.254' ||
+      host === 'metadata.google.internal' ||
+      host === 'instance-data' ||
+      host.endsWith('.internal') ||
+      host.endsWith('.local')
+    ) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Normalizes TorrServer torrent JSON response into Kinoroom TorrentStatus format
  */
 function normalizeTorrServerStatus(data: any): TorrentStatus {
@@ -36,36 +60,85 @@ function normalizeTorrServerStatus(data: any): TorrentStatus {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { torrServerUrl, magnet } = body;
+    const { torrServerUrl, torrServerAuth, magnet, hash } = body;
 
-    if (!torrServerUrl || !magnet) {
-      return NextResponse.json({ error: 'Missing torrServerUrl or magnet' }, { status: 400 });
+    // Prioritize server environment variable if configured, otherwise validate user-provided URL
+    const targetUrl = (process.env.TORRSERVER_URL || torrServerUrl || '').trim();
+    const targetAuth = (process.env.TORRSERVER_AUTH || torrServerAuth || '').trim();
+
+    if (!targetUrl) {
+      return NextResponse.json({ error: 'Missing TorrServer URL' }, { status: 400 });
     }
 
-    const cleanBaseUrl = torrServerUrl.replace(/\/$/, '');
-
-    // Add torrent to TorrServer and retrieve its status
-    const addRes = await fetch(`${cleanBaseUrl}/torrents`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'add',
-        link: magnet,
-        save_to_db: true
-      }),
-      signal: AbortSignal.timeout(6000)
-    });
-
-    if (!addRes.ok) {
+    if (!isValidTorrServerUrl(targetUrl)) {
       return NextResponse.json(
-        { error: `TorrServer returned HTTP ${addRes.status}` },
-        { status: 502 }
+        { error: 'Invalid or forbidden TorrServer URL (SSRF protection)' },
+        { status: 400 }
       );
     }
 
-    const torrData = await addRes.json();
-    const normalized = normalizeTorrServerStatus(torrData);
+    if (!magnet && !hash) {
+      return NextResponse.json({ error: 'Missing magnet link or info hash' }, { status: 400 });
+    }
 
+    const cleanBaseUrl = targetUrl.replace(/\/$/, '');
+
+    // Setup headers with optional Basic Auth
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (targetAuth) {
+      headers['Authorization'] =
+        targetAuth.startsWith('Basic ') || targetAuth.startsWith('Bearer ')
+          ? targetAuth
+          : `Basic ${Buffer.from(targetAuth).toString('base64')}`;
+    }
+
+    let torrData: any = null;
+
+    // 1. If hash is already known, query status using action: "get" to avoid repeatedly re-adding
+    if (hash) {
+      try {
+        const getRes = await fetch(`${cleanBaseUrl}/torrents`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ action: 'get', hash }),
+          signal: AbortSignal.timeout(5000)
+        });
+        if (getRes.ok) {
+          torrData = await getRes.json();
+        }
+      } catch {
+        // Fall back to add
+      }
+    }
+
+    // 2. If not found or initial poll without hash, call action: "add"
+    if (!torrData && magnet) {
+      const addRes = await fetch(`${cleanBaseUrl}/torrents`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          action: 'add',
+          link: magnet,
+          save_to_db: true
+        }),
+        signal: AbortSignal.timeout(7000)
+      });
+
+      if (!addRes.ok) {
+        return NextResponse.json(
+          { error: `TorrServer returned HTTP ${addRes.status}` },
+          { status: addRes.status === 401 ? 401 : 502 }
+        );
+      }
+
+      torrData = await addRes.json();
+    }
+
+    if (!torrData) {
+      return NextResponse.json({ error: 'Failed to retrieve torrent from TorrServer' }, { status: 404 });
+    }
+
+    const normalized = normalizeTorrServerStatus(torrData);
     return NextResponse.json(normalized);
   } catch (err: any) {
     return NextResponse.json(

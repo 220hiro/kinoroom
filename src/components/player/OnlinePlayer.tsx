@@ -24,7 +24,7 @@ export function OnlinePlayer({
 }: OnlinePlayerProps) {
   const [provider, setProvider] = useState<ProviderKey>('vidlink');
   const [key, setKey] = useState(0);
-  const [blockAds, setBlockAds] = useState(false);
+  const [blockAds, setBlockAds] = useState(true);
 
   const idOrImdb = imdbId || tmdbId;
 
@@ -143,7 +143,7 @@ export function OnlinePlayer({
           src={currentUrl}
           sandbox={
             blockAds
-              ? 'allow-scripts allow-same-origin allow-forms allow-presentation allow-popups-to-escape-sandbox'
+              ? 'allow-scripts allow-same-origin allow-forms allow-presentation'
               : undefined
           }
           allowFullScreen

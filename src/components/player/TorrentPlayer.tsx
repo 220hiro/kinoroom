@@ -63,6 +63,8 @@ export function TorrentPlayer({
   const [showControls, setShowControls] = useState(true);
   const [isLoadingMetadata, setIsLoadingMetadata] = useState(true);
   const [hasStartedPlaying, setHasStartedPlaying] = useState(false);
+  const [backendError, setBackendError] = useState<string | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
 
   const isIOS = typeof navigator !== 'undefined' && (
     /iPad|iPhone|iPod/.test(navigator.userAgent) ||
@@ -109,18 +111,50 @@ export function TorrentPlayer({
     setStatus(null);
     setIsLoadingMetadata(true);
     setHasStartedPlaying(false);
-  }, [magnet]);
+    setBackendError(null);
+    setElapsedSeconds(0);
+  }, [magnet, settings.useTorrServer, settings.torrServerUrl]);
 
-  // Poll torrent status
+  // Track elapsed seconds while waiting for metadata
+  useEffect(() => {
+    if (!isLoadingMetadata || hasStartedPlaying) return;
+    const interval = setInterval(() => {
+      setElapsedSeconds((s) => s + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isLoadingMetadata, hasStartedPlaying]);
+
+  // Poll torrent status via appropriate backend (TorrServer or WebTorrent)
   useEffect(() => {
     let isMounted = true;
 
     async function checkStatus() {
       try {
-        const res = await fetch(`/api/torrent/info?torrent=${encodeURIComponent(magnet)}`);
-        if (!res.ok) return;
+        let res: Response;
+        if (settings.useTorrServer && settings.torrServerUrl) {
+          res = await fetch('/api/torrent/torrserver', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              torrServerUrl: settings.torrServerUrl,
+              magnet
+            })
+          });
+        } else {
+          res = await fetch(`/api/torrent/info?torrent=${encodeURIComponent(magnet)}`);
+        }
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          if (isMounted && settings.useTorrServer) {
+            setBackendError(`TorrServer (${settings.torrServerUrl}): ${errData.error || res.statusText}`);
+          }
+          return;
+        }
+
         const data: TorrentStatus = await res.json();
         if (isMounted) {
+          setBackendError(null);
           setStatus(data);
           if (data.ready && data.files.length > 0) {
             setIsLoadingMetadata(false);
@@ -150,10 +184,12 @@ export function TorrentPlayer({
                 targetIdx = chosen.index;
               }
             }
-
           }
         }
-      } catch (err) {
+      } catch (err: any) {
+        if (isMounted && settings.useTorrServer) {
+          setBackendError(`Не удалось связаться с TorrServer (${settings.torrServerUrl})`);
+        }
         console.error('Status poll error:', err);
       }
     }
@@ -165,7 +201,7 @@ export function TorrentPlayer({
       isMounted = false;
       clearInterval(interval);
     };
-  }, [magnet, initialFileIndex, isIOS, selectedFileIndex, season, episode]);
+  }, [magnet, initialFileIndex, isIOS, selectedFileIndex, season, episode, settings.useTorrServer, settings.torrServerUrl]);
 
   // Update selected file if season or episode changes
   useEffect(() => {
@@ -574,11 +610,22 @@ export function TorrentPlayer({
         </button>
       )}
 
-      {/* Sleek Buffering Indicator (when playing and waiting for data) */}
+      {/* Sleek Buffering & Diagnostic Indicator */}
       {isLoadingMetadata && isPlaying && (
-        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/50 pointer-events-none gap-2">
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/60 pointer-events-none gap-2 px-4 text-center">
           <Loader2 className="w-8 h-8 sm:w-10 sm:h-10 text-red-500 animate-spin" />
-          <span className="text-xs text-white/90 font-medium">Буферизация...</span>
+          <span className="text-xs text-white/90 font-medium">
+            {settings.useTorrServer
+              ? 'Подключение к TorrServer...'
+              : elapsedSeconds > 10
+              ? `Поиск пиров в сети (${status?.numPeers || 0} пиров, ${elapsedSeconds}с)...`
+              : 'Буферизация потока...'}
+          </span>
+          {backendError && (
+            <span className="text-[11px] text-red-400 bg-red-950/70 px-3 py-1 rounded-lg border border-red-500/30">
+              {backendError}
+            </span>
+          )}
         </div>
       )}
 
@@ -781,6 +828,19 @@ export function TorrentPlayer({
         </div>
       )}
       </div>
+
+      {/* Backend connection diagnostic error banner */}
+      {backendError && (
+        <div className="flex items-center justify-between gap-2 px-3.5 py-2.5 bg-red-500/15 border border-red-500/30 rounded-xl text-xs text-red-300">
+          <span className="truncate">⚠️ {backendError}</span>
+          <button
+            onClick={() => setShowSettingsModal(true)}
+            className="px-2.5 py-1 bg-red-600 hover:bg-red-500 text-white font-bold rounded-lg transition-colors cursor-pointer text-xs shrink-0"
+          >
+            Настройки
+          </button>
+        </div>
+      )}
 
       {/* Subtle non-blocking hint for non-MP4 releases on iOS */}
       {isIOS && status?.files && (() => {

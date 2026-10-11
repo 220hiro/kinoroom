@@ -22,7 +22,7 @@ import {
   X,
   Sparkles
 } from 'lucide-react';
-import { TorrentStatus } from '@/lib/types';
+import { TorrentStatus, TorrentSearchResult } from '@/lib/types';
 import { formatBytes } from '@/lib/utils';
 import { getSettings, saveSettings, AppSettings } from '@/lib/storage';
 
@@ -30,16 +30,24 @@ interface TorrentPlayerProps {
   magnet: string;
   initialFileIndex?: number;
   initialTime?: number;
+  season?: number;
+  episode?: number;
   onTimeUpdate?: (currentTime: number, duration: number) => void;
   onSwitchToOnline?: () => void;
+  availableTorrents?: TorrentSearchResult[];
+  onSelectTorrent?: (magnet: string) => void;
 }
 
 export function TorrentPlayer({
   magnet,
   initialFileIndex,
   initialTime,
+  season,
+  episode,
   onTimeUpdate,
-  onSwitchToOnline
+  onSwitchToOnline,
+  availableTorrents,
+  onSelectTorrent
 }: TorrentPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -98,6 +106,14 @@ export function TorrentPlayer({
     return () => clearTimeout(timer);
   }, []);
 
+  const isMp4Release = (tTitle: string) => {
+    return /(кпк|mp4|avc|iphone|ipad|android|h\.264|web-dlrip-avc|hdtvrip-avc)/i.test(tTitle);
+  };
+
+  const mp4Alternative = availableTorrents?.find(
+    (t) => isMp4Release(t.title) && t.magnet !== magnet
+  );
+
   // Poll torrent status
   useEffect(() => {
     let isMounted = true;
@@ -111,14 +127,30 @@ export function TorrentPlayer({
           setStatus(data);
           if (data.ready && data.files.length > 0) {
             setIsLoadingMetadata(false);
-            // Auto-select largest video if not set
+            // Auto-select episode/file
             let targetIdx = selectedFileIndex;
             if (initialFileIndex === undefined) {
               const videoFiles = data.files.filter((f) => f.isVideo);
               if (videoFiles.length > 0) {
-                const largest = videoFiles.reduce((p, c) => (c.length > p.length ? c : p));
-                setSelectedFileIndex(largest.index);
-                targetIdx = largest.index;
+                let matchedFile: any = null;
+                if (season && episode) {
+                  const sStr = season.toString().padStart(2, '0');
+                  const eStr = episode.toString().padStart(2, '0');
+                  matchedFile = videoFiles.find((f) => {
+                    const n = f.name.toLowerCase();
+                    return (
+                      n.includes(`s${sStr}e${eStr}`) ||
+                      n.includes(`s${season}e${episode}`) ||
+                      n.includes(`s${sStr}.e${eStr}`) ||
+                      n.includes(`[${sStr}x${eStr}]`) ||
+                      n.includes(`_${eStr}.`) ||
+                      n.includes(`e${eStr}`)
+                    );
+                  });
+                }
+                const chosen = matchedFile || videoFiles[0];
+                setSelectedFileIndex(chosen.index);
+                targetIdx = chosen.index;
               }
             }
 
@@ -126,6 +158,8 @@ export function TorrentPlayer({
             const targetFile = data.files.find((f) => f.index === targetIdx);
             if (isIOS && targetFile && /\.(avi|mkv|wmv)$/i.test(targetFile.name)) {
               setVideoError(`Файл «${targetFile.name}» не поддерживается браузером Safari на iPhone.`);
+            } else {
+              setVideoError(null);
             }
           }
         }
@@ -141,7 +175,29 @@ export function TorrentPlayer({
       isMounted = false;
       clearInterval(interval);
     };
-  }, [magnet, initialFileIndex, isIOS, selectedFileIndex]);
+  }, [magnet, initialFileIndex, isIOS, selectedFileIndex, season, episode]);
+
+  // Update selected file if season or episode changes
+  useEffect(() => {
+    if (!status?.ready || !status?.files?.length || !season || !episode) return;
+    const videoFiles = status.files.filter((f) => f.isVideo);
+    const sStr = season.toString().padStart(2, '0');
+    const eStr = episode.toString().padStart(2, '0');
+    const matchedFile = videoFiles.find((f) => {
+      const n = f.name.toLowerCase();
+      return (
+        n.includes(`s${sStr}e${eStr}`) ||
+        n.includes(`s${season}e${episode}`) ||
+        n.includes(`s${sStr}.e${eStr}`) ||
+        n.includes(`[${sStr}x${eStr}]`) ||
+        n.includes(`_${eStr}.`) ||
+        n.includes(`e${eStr}`)
+      );
+    });
+    if (matchedFile && matchedFile.index !== selectedFileIndex) {
+      setSelectedFileIndex(matchedFile.index);
+    }
+  }, [season, episode, status]);
 
   // Check format support whenever selectedFileIndex changes
   useEffect(() => {
@@ -360,11 +416,12 @@ export function TorrentPlayer({
   };
 
   return (
-    <div
-      ref={containerRef}
-      onMouseMove={handleMouseMove}
-      className="relative w-full min-h-[250px] sm:min-h-0 aspect-video bg-black rounded-2xl overflow-hidden shadow-2xl border border-white/10 group select-none flex flex-col justify-between"
-    >
+    <div className="space-y-3">
+      <div
+        ref={containerRef}
+        onMouseMove={handleMouseMove}
+        className="relative w-full min-h-[300px] sm:min-h-0 sm:aspect-video bg-black rounded-2xl overflow-hidden shadow-2xl border border-white/10 group select-none flex flex-col justify-between"
+      >
       {/* Native Video Element */}
       <video
         ref={videoRef}
@@ -583,46 +640,63 @@ export function TorrentPlayer({
 
       {/* Video Error / Unsupported Format Fallback Overlay */}
       {videoError && (
-        <div className="absolute inset-0 bg-black/95 backdrop-blur-md z-30 flex flex-col items-center justify-center p-5 text-center space-y-3.5 animate-fade-in overflow-y-auto">
-          <div className="w-12 h-12 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center shrink-0">
-            <Radio className="w-6 h-6 animate-pulse" />
+        <div className="absolute inset-0 bg-black/95 backdrop-blur-md z-30 flex flex-col items-center justify-center p-4 text-center space-y-2.5 animate-fade-in overflow-y-auto max-h-full">
+          <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center shrink-0">
+            <Radio className="w-5 h-5 sm:w-6 sm:h-6 animate-pulse" />
           </div>
 
-          <div className="space-y-1.5 max-w-sm">
+          <div className="space-y-1 max-w-sm">
             <h3 className="text-sm sm:text-base font-bold text-white">
-              {isIOS ? 'Safari на iPhone не поддерживает этот формат' : 'Не удалось воспроизвести данный поток'}
+              {isIOS ? 'Safari на iPhone не поддерживает этот файл' : 'Не удалось воспроизвести данный поток'}
             </h3>
             <p className="text-[11px] sm:text-xs text-gray-300">
               {isIOS
-                ? 'Эта торрент-раздача упакована в формат .mkv / .avi, который Apple Safari не умеет воспроизводить напрямую в браузере. Для просмотра:'
+                ? 'Эта раздача в формате .avi / .mkv, который Safari не открывает в HTML5. Выберите решение для торрента:'
                 : (videoError || 'Ошибка воспроизведения торрент-потока в браузере.')}
             </p>
           </div>
 
           <div className="flex flex-col gap-2 w-full max-w-xs">
-            {onSwitchToOnline && (
+            {mp4Alternative && onSelectTorrent && (
               <button
-                onClick={onSwitchToOnline}
-                className="w-full px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl shadow-lg transition-transform hover:scale-102 cursor-pointer flex items-center justify-center gap-1.5"
+                onClick={() => onSelectTorrent(mp4Alternative.magnet)}
+                className="w-full px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-lg transition-transform hover:scale-102 cursor-pointer flex items-center justify-center gap-2"
               >
-                <span>⚡ Включить Онлайн-плеер (Мгновенно)</span>
+                <Sparkles className="w-4 h-4 text-amber-300" />
+                <span>📱 Включить раздачу MP4 (для iPhone)</span>
               </button>
             )}
 
             <div className="flex gap-2">
               <a
                 href={`vlc://${getFullStreamUrl()}`}
-                className="flex-1 px-3 py-2 bg-white/10 hover:bg-white/20 text-white font-medium text-xs rounded-xl transition-colors text-center block"
+                className="flex-1 px-2.5 py-2 bg-white/10 hover:bg-white/20 text-white font-medium text-xs rounded-xl transition-colors text-center block"
               >
-                Запустить в VLC
+                В VLC
+              </a>
+              <a
+                href={`outplayer://${getFullStreamUrl()}`}
+                className="flex-1 px-2.5 py-2 bg-white/10 hover:bg-white/20 text-sky-300 font-medium text-xs rounded-xl transition-colors text-center block"
+              >
+                В Outplayer
               </a>
               <button
                 onClick={handleDownloadM3u}
-                className="flex-1 px-3 py-2 bg-white/10 hover:bg-white/20 text-emerald-300 font-medium text-xs rounded-xl transition-colors text-center cursor-pointer"
+                className="px-3 py-2 bg-white/10 hover:bg-white/20 text-emerald-300 font-medium text-xs rounded-xl transition-colors text-center cursor-pointer"
+                title="Скачать плейлист .m3u"
               >
-                Скачать .m3u
+                .m3u
               </button>
             </div>
+
+            {onSwitchToOnline && (
+              <button
+                onClick={onSwitchToOnline}
+                className="w-full px-3 py-1.5 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white font-medium text-[11px] rounded-lg transition-colors cursor-pointer"
+              >
+                Или открыть Онлайн-плееры
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -834,6 +908,41 @@ export function TorrentPlayer({
                 Сохранить
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      </div>
+
+      {/* Episodes Playlist row if multi-file */}
+      {status && status.files.filter((f) => f.isVideo).length > 1 && (
+        <div className="bg-[#13151f] p-3 rounded-xl border border-white/10 space-y-2">
+          <div className="flex items-center justify-between text-xs text-gray-300">
+            <span className="font-bold flex items-center gap-1.5 text-white">
+              <FileVideo className="w-3.5 h-3.5 text-amber-400" /> Серии в раздаче:
+            </span>
+            <span className="text-gray-400 text-[11px]">
+              {status.files.filter((f) => f.isVideo).length} серий
+            </span>
+          </div>
+          <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+            {status.files
+              .filter((f) => f.isVideo)
+              .map((f) => (
+                <button
+                  key={f.index}
+                  onClick={() => {
+                    setSelectedFileIndex(f.index);
+                    setIsLoadingMetadata(true);
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+                    selectedFileIndex === f.index
+                      ? 'bg-amber-500 text-black font-bold shadow'
+                      : 'bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white'
+                  }`}
+                >
+                  {f.name.replace(/\.(mp4|mkv|avi)$/i, '')}
+                </button>
+              ))}
           </div>
         </div>
       )}

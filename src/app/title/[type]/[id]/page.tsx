@@ -56,12 +56,21 @@ export default function TitlePage({ params }: TitlePageProps) {
   const [bookmarked, setBookmarked] = useState(false);
   const [isPlayerOpen, setIsPlayerOpen] = useState(false);
 
+  const isIOS = typeof window !== 'undefined' && (
+    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+  );
+
+  const isMp4Release = (title: string) => {
+    return /(кпк|mp4|avc|iphone|ipad|android|h\.264|web-dlrip-avc|hdtvrip-avc)/i.test(title);
+  };
+
   // Torrents state
   const [torrents, setTorrents] = useState<TorrentSearchResult[]>([]);
   const [isSearchingTorrents, setIsSearchingTorrents] = useState(false);
   const [selectedMagnet, setSelectedMagnet] = useState<string | null>(null);
   const [copiedMagnet, setCopiedMagnet] = useState<string | null>(null);
-  const [torrentFilter, setTorrentFilter] = useState<'all' | 'high_seeds' | 'hd' | 'dub'>('all');
+  const [torrentFilter, setTorrentFilter] = useState<'all' | 'high_seeds' | 'hd' | 'dub' | 'mp4'>('all');
   const [searchTorrentText, setSearchTorrentText] = useState('');
 
   const [savedProgressTime, setSavedProgressTime] = useState<number | null>(null);
@@ -110,6 +119,11 @@ export default function TitlePage({ params }: TitlePageProps) {
         if (data.length > 0) {
           setSelectedMagnet((prev) => {
             if (prev && data.some((d) => d.magnet === prev)) return prev;
+            // On iOS (iPhone/iPad), prioritize releases that work natively in Safari (MP4 / КПК)
+            if (isIOS) {
+              const mp4Candidate = data.find((d) => isMp4Release(d.title));
+              if (mp4Candidate) return mp4Candidate.magnet;
+            }
             return data[0].magnet;
           });
         }
@@ -149,6 +163,7 @@ export default function TitlePage({ params }: TitlePageProps) {
       const matchesQuality = (t.quality || '').toLowerCase().includes(q);
       if (!matchesTitle && !matchesTrans && !matchesQuality) return false;
     }
+    if (torrentFilter === 'mp4') return isMp4Release(t.title);
     if (torrentFilter === 'high_seeds') return t.seeds >= 15;
     if (torrentFilter === 'hd') return t.quality === '1080p' || t.quality === '4K UHD';
     if (torrentFilter === 'dub') return Boolean(t.translation);
@@ -453,8 +468,12 @@ export default function TitlePage({ params }: TitlePageProps) {
                 <TorrentPlayer
                   magnet={selectedMagnet}
                   initialTime={savedProgressTime ?? undefined}
+                  season={selectedSeason}
+                  episode={selectedEpisode}
                   onTimeUpdate={handleTimeUpdate}
                   onSwitchToOnline={() => setActiveTab('online')}
+                  availableTorrents={torrents}
+                  onSelectTorrent={handleSelectTorrent}
                 />
               ) : (
                 <div className="w-full aspect-video min-h-[220px] bg-black/50 rounded-2xl border border-white/10 flex flex-col items-center justify-center p-6 text-center">
@@ -521,6 +540,16 @@ export default function TitlePage({ params }: TitlePageProps) {
                 }`}
               >
                 Все ({torrents.length})
+              </button>
+              <button
+                onClick={() => setTorrentFilter('mp4')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  torrentFilter === 'mp4'
+                    ? 'bg-emerald-500 text-black font-bold shadow'
+                    : 'bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white'
+                }`}
+              >
+                <span>📱 Для iPhone (MP4)</span>
               </button>
               <button
                 onClick={() => setTorrentFilter('high_seeds')}
@@ -600,6 +629,13 @@ export default function TitlePage({ params }: TitlePageProps) {
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                             {t.seeds} сидов
                           </span>
+
+                          {/* MP4 iPhone Badge */}
+                          {isMp4Release(t.title) && (
+                            <span className="flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-xs font-bold">
+                              <span>📱 MP4 (iPhone)</span>
+                            </span>
+                          )}
 
                           {/* Peers Badge */}
                           <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-400 border border-blue-500/20 text-xs font-semibold">

@@ -524,3 +524,118 @@ test('OpenMediaDiscoveryService: SSRF and host allowlist enforcement', async () 
   const isAccessible = await openMediaDiscoveryService.verifyTechnicalAccessibility(validUrl);
   assert.equal(isAccessible, true, 'Wikimedia Commons video transcode must be reachable via range request');
 });
+
+test('External Sources: Allowlist validates safe iframe domains and rejects untrusted/XSS URLs', async () => {
+  const { isValidExternalIframeUrl } = await import('../src/lib/services/externalSources/allowlist');
+
+  // Valid trusted domains
+  assert.equal(isValidExternalIframeUrl('https://vidsrc.sh/embed/movie/10331'), true);
+  assert.equal(isValidExternalIframeUrl('https://vidsrc.sh/embed/tv/1396/1/1'), true);
+  assert.equal(isValidExternalIframeUrl('https://kodikplayer.com/seria/73959/68e2e57cb95f7fb93655637acaca26c2/720p'), true);
+  assert.equal(isValidExternalIframeUrl('https://aniqit.com/video/123/hash'), true);
+  assert.equal(isValidExternalIframeUrl('https://vidsrc.to/embed/movie/550'), true);
+
+  // Rejected invalid or unsafe URLs
+  assert.equal(isValidExternalIframeUrl('http://vidsrc.sh/embed/movie/10331'), false, 'Non-HTTPS must be rejected');
+  assert.equal(isValidExternalIframeUrl('https://untrusted-pirate-site.ru/player'), false, 'Untrusted host must be rejected');
+  assert.equal(isValidExternalIframeUrl('https://vidsrc.sh.malicious.com/embed'), false, 'Lookalike domain must be rejected');
+  assert.equal(isValidExternalIframeUrl('javascript:alert(1)'), false, 'javascript: scheme must be rejected');
+  assert.equal(isValidExternalIframeUrl('data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg=='), false, 'data: scheme must be rejected');
+  assert.equal(isValidExternalIframeUrl('https://vidsrc.sh/embed/<script>alert(1)</script>'), false, 'XSS payloads must be rejected');
+  assert.equal(isValidExternalIframeUrl(''), false);
+  assert.equal(isValidExternalIframeUrl(null as any), false);
+});
+
+test('External Sources: VidSrc adapter builds correct movie and TV routes with safety checks', async () => {
+  const { getVidSrcSources } = await import('../src/lib/services/externalSources/vidsrcAdapter');
+
+  // 1. Movie route
+  const movieSources = getVidSrcSources({
+    tmdbId: 10331,
+    type: 'movie',
+    title: 'Night of the Living Dead'
+  });
+  assert.equal(movieSources.length, 1);
+  assert.equal(movieSources[0].adapter, 'vidsrc');
+  assert.equal(movieSources[0].status, 'available');
+  assert.equal(movieSources[0].type, 'iframe');
+  assert.equal(movieSources[0].iframeUrl, 'https://vidsrc.sh/embed/movie/10331');
+  assert.equal(movieSources[0].declaredQuality, '1080p');
+
+  // 2. TV Series route with season and episode
+  const tvSources = getVidSrcSources({
+    tmdbId: 1396,
+    type: 'tv',
+    season: 2,
+    episode: 7,
+    title: 'Breaking Bad'
+  });
+  assert.equal(tvSources.length, 1);
+  assert.equal(tvSources[0].adapter, 'vidsrc');
+  assert.equal(tvSources[0].status, 'available');
+  assert.equal(tvSources[0].type, 'iframe');
+  assert.equal(tvSources[0].iframeUrl, 'https://vidsrc.sh/embed/tv/1396/2/7');
+  assert.equal(tvSources[0].season, 2);
+  assert.equal(tvSources[0].episode, 7);
+  assert.match(tvSources[0].name, /S2:E7/);
+});
+
+test('External Sources: Kodik adapter handles rate limits, redirect guards, and honest diagnostics', async () => {
+  const { getKodikSources } = await import('../src/lib/services/externalSources/kodikAdapter');
+
+  const kodikResults = await getKodikSources({
+    tmdbId: 10331,
+    type: 'movie',
+    title: 'Night of the Living Dead'
+  });
+
+  assert.ok(kodikResults.length >= 1);
+  assert.equal(kodikResults[0].adapter, 'kodik');
+  assert.equal(kodikResults[0].type, 'iframe');
+
+  // When Kinobox server redirects to selectel 1GB speedtest, the adapter catches it without downloading 1GB
+  if (kodikResults[0].status === 'unavailable') {
+    assert.match(kodikResults[0].diagnostics || '', /Kinobox API|недоступен|ограничен|redirect/);
+  }
+});
+
+test('External Sources: EzVidAPI adapter is disabled by default with diagnostic explanation', async () => {
+  const { getEzVidSources } = await import('../src/lib/services/externalSources/ezvidAdapter');
+
+  const ezvidResults = await getEzVidSources({
+    tmdbId: 10331,
+    type: 'movie',
+    title: 'Night of the Living Dead'
+  });
+
+  assert.equal(ezvidResults.length, 1);
+  assert.equal(ezvidResults[0].adapter, 'ezvid');
+  assert.equal(ezvidResults[0].status, 'disabled');
+  assert.equal(ezvidResults[0].isExperimental, true);
+  assert.match(ezvidResults[0].diagnostics || '', /502 Bad Gateway|отключен|права на коммерческий контент не подтверждены/);
+});
+
+test('External Sources API: GET /api/playback/external-sources validates params and aggregates sources', async () => {
+  const { GET } = await import('../src/app/api/playback/external-sources/route');
+  const { NextRequest } = await import('next/server');
+
+  // Missing tmdbId
+  const missingReq = new NextRequest('http://localhost:3000/api/playback/external-sources');
+  const missingRes = await GET(missingReq);
+  assert.equal(missingRes.status, 400);
+  const missingJson = await missingRes.json();
+  assert.equal(missingJson.error, 'MISSING_PARAM');
+
+  // Valid movie request
+  const movieReq = new NextRequest('http://localhost:3000/api/playback/external-sources?tmdbId=10331&type=movie');
+  const movieRes = await GET(movieReq);
+  assert.equal(movieRes.status, 200);
+  const movieJson = await movieRes.json();
+  assert.equal(movieJson.success, true);
+  assert.equal(movieJson.tmdbId, 10331);
+  assert.ok(Array.isArray(movieJson.sources));
+  assert.ok(movieJson.sources.some((s: any) => s.adapter === 'vidsrc'));
+  assert.ok(movieJson.sources.some((s: any) => s.adapter === 'kodik'));
+  assert.ok(movieJson.sources.some((s: any) => s.adapter === 'ezvid'));
+});
+

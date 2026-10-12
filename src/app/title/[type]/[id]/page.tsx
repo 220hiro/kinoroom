@@ -486,14 +486,14 @@ export default function TitlePage({ params }: TitlePageProps) {
                 }`}
               >
                 <Radio className="w-3.5 h-3.5 shrink-0" />
-                <span className="truncate">Балансеры</span>
+                <span className="truncate">Онлайн-источники</span>
               </button>
             </div>
 
             <div className="text-[11px] sm:text-xs text-gray-400 text-center sm:text-right">
               {activeTab === 'native' && 'Собственный нативный HLS-плеер КиноРум (без рекламы)'}
               {activeTab === 'torrent' && 'Прямой торрент-стриминг (требуется TorrServer)'}
-              {activeTab === 'online' && 'Внешние веб-балансеры (могут содержать рекламу провайдеров)'}
+              {activeTab === 'online' && 'Внешние онлайн-источники (Kodik, VidSrc, EzVidAPI)'}
             </div>
           </div>
 

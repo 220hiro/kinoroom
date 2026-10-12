@@ -506,16 +506,48 @@ export default function TitlePage({ params }: TitlePageProps) {
                   <span className="text-xs text-gray-300">Поиск потока через Playback API...</span>
                 </div>
               ) : playbackData && playbackData.success ? (
-                <KinoRoomPlayer
-                  key={media.id}
-                  playbackData={playbackData}
-                  initialTime={savedProgressTime ?? undefined}
-                  onTimeUpdate={handleTimeUpdate}
-                  onTranslationChange={async (translationId) => {
-                    await resolvePlaybackStream(undefined, translationId);
-                  }}
-                  onRefreshStream={() => resolvePlaybackStream()}
-                />
+                <div className="space-y-3">
+                  <KinoRoomPlayer
+                    key={media.id}
+                    playbackData={playbackData}
+                    initialTime={savedProgressTime ?? undefined}
+                    onTimeUpdate={handleTimeUpdate}
+                    onTranslationChange={async (translationId) => {
+                      await resolvePlaybackStream(undefined, translationId);
+                    }}
+                    onRefreshStream={() => resolvePlaybackStream()}
+                  />
+                  {(playbackData.attribution || playbackData.license) && (
+                    <div
+                      data-testid="playback-attribution"
+                      className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs text-gray-400"
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        {playbackData.license && (
+                          <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-semibold border border-emerald-500/30 text-[11px]">
+                            {playbackData.license}
+                          </span>
+                        )}
+                        {playbackData.attribution && (
+                          <span className="text-gray-300">
+                            {playbackData.attribution.text}
+                          </span>
+                        )}
+                      </div>
+                      {playbackData.attribution?.url && (
+                        <a
+                          href={playbackData.attribution.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-red-400 hover:text-red-300 transition-colors"
+                        >
+                          <span>Официальный сайт</span>
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      )}
+                    </div>
+                  )}
+                </div>
               ) : (
                 <div className="w-full aspect-video min-h-[280px] bg-[#12141f] rounded-2xl border border-white/10 flex flex-col items-center justify-center p-6 text-center space-y-4">
                   <div className="w-12 h-12 rounded-2xl bg-red-600/10 border border-red-500/20 flex items-center justify-center text-red-400">

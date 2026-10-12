@@ -62,7 +62,55 @@ test('PlaybackRegistry rejects unknown commercial string title with SOURCE_UNAVA
   assert.equal(result.stream.url, '');
 });
 
-test('PlaybackRegistry resolves Tears of Steel ONLY with explicit demo ID', async () => {
+test('PlaybackRegistry maps confirmed TMDB ID 133701 to Tears of Steel with Blender CC BY 3.0 attribution', async () => {
+  const resultNum = await playbackRegistry.resolve({
+    mediaId: 133701,
+    mediaType: 'movie'
+  });
+  assert.equal(resultNum.success, true);
+  assert.equal(resultNum.media.id, 133701);
+  assert.match(resultNum.media.title, /Tears of Steel|Слёзы стали/);
+  assert.equal(resultNum.stream.type, 'hls');
+  assert.match(resultNum.stream.url, /\.m3u8/);
+  assert.equal(resultNum.license, 'Creative Commons Attribution 3.0 (CC BY 3.0)');
+  assert.ok(resultNum.attribution);
+  assert.match(resultNum.attribution!.text, /Blender Foundation/);
+  assert.equal(resultNum.attribution!.url, 'https://mango.blender.org/');
+
+  // Also works with string representation '133701'
+  const resultStr = await playbackRegistry.resolve({
+    mediaId: '133701',
+    mediaType: 'movie'
+  });
+  assert.equal(resultStr.success, true);
+  assert.equal(resultStr.license, 'Creative Commons Attribution 3.0 (CC BY 3.0)');
+
+  // TV query with movie TMDB ID must NOT resolve
+  const resultTv = await playbackRegistry.resolve({
+    mediaId: 133701,
+    mediaType: 'tv'
+  });
+  assert.equal(resultTv.success, false);
+  assert.equal(resultTv.code, 'SOURCE_UNAVAILABLE');
+});
+
+test('PlaybackRegistry maps confirmed TMDB ID 10378 to Big Buck Bunny with Blender CC BY 3.0 attribution', async () => {
+  const result = await playbackRegistry.resolve({
+    mediaId: 10378,
+    mediaType: 'movie'
+  });
+  assert.equal(result.success, true);
+  assert.equal(result.media.id, 10378);
+  assert.match(result.media.title, /Big Buck Bunny|Большой Бак Банни/);
+  assert.equal(result.stream.type, 'hls');
+  assert.match(result.stream.url, /\.m3u8/);
+  assert.equal(result.license, 'Creative Commons Attribution 3.0 (CC BY 3.0)');
+  assert.ok(result.attribution);
+  assert.match(result.attribution!.text, /Blender Foundation/);
+  assert.equal(result.attribution!.url, 'https://peach.blender.org/');
+});
+
+test('PlaybackRegistry resolves Tears of Steel with explicit demo ID', async () => {
   // 1. Direct ID 'tears-of-steel'
   const direct = await playbackRegistry.resolve({
     mediaId: 'tears-of-steel',

@@ -397,4 +397,72 @@ test.describe('KinoRoom Player & Playback API E2E', () => {
 
     await expect(page.locator('text=HTTP 404 SOURCE_UNAVAILABLE')).toBeVisible({ timeout: 10_000 });
   });
+
+  test('Catalog: Tears of Steel (/title/movie/133701) loads KinoRoomPlayer with CC BY 3.0 attribution', async ({ page, browserName }) => {
+    await page.goto('/title/movie/133701');
+
+    // Title header
+    await expect(page.locator('h1')).toContainText(/Сл[её]зы стали|Tears of Steel/i);
+
+    // Player and attribution
+    const playerContainer = page.locator('#media-player-container');
+    await expect(playerContainer).toBeVisible();
+
+    const attribution = page.locator('[data-testid="playback-attribution"]');
+    await expect(attribution).toBeVisible({ timeout: 15_000 });
+    await expect(attribution).toContainText(/Blender Foundation/i);
+    await expect(attribution).toContainText(/CC BY 3.0/i);
+
+    const videoLocator = page.locator('video');
+    await expect(videoLocator).toBeVisible();
+
+    if (!(browserName === 'webkit' && process.platform === 'win32')) {
+      await page.waitForFunction(() => {
+        const v = document.querySelector('video');
+        return v && v.duration > 0;
+      }, null, { timeout: 20_000 });
+    }
+  });
+
+  test('Catalog: Big Buck Bunny (/title/movie/10378) loads KinoRoomPlayer with CC BY 3.0 attribution', async ({ page, browserName }) => {
+    await page.goto('/title/movie/10378');
+
+    // Title header
+    await expect(page.locator('h1')).toContainText(/Большой Бак|Big Buck Bunny/i);
+
+    // Player and attribution
+    const playerContainer = page.locator('#media-player-container');
+    await expect(playerContainer).toBeVisible();
+
+    const attribution = page.locator('[data-testid="playback-attribution"]');
+    await expect(attribution).toBeVisible({ timeout: 15_000 });
+    await expect(attribution).toContainText(/Blender Foundation/i);
+    await expect(attribution).toContainText(/CC BY 3.0/i);
+
+    const videoLocator = page.locator('video');
+    await expect(videoLocator).toBeVisible();
+
+    if (!(browserName === 'webkit' && process.platform === 'win32')) {
+      await page.waitForFunction(() => {
+        const v = document.querySelector('video');
+        return v && v.duration > 0;
+      }, null, { timeout: 20_000 });
+    }
+  });
+
+  test('Catalog: TMDB 969681 (/title/movie/969681) honestly shows stream unavailable message without fake demo fallback', async ({ page }) => {
+    await page.goto('/title/movie/969681');
+
+    // The unavailable fallback container in native tab
+    const fallbackMessage = page.locator('text=Прямой открытый HLS-поток не обнаружен');
+    await expect(fallbackMessage).toBeVisible({ timeout: 15_000 });
+
+    // Video player should NOT be rendered
+    const videoLocator = page.locator('video');
+    await expect(videoLocator).toHaveCount(0);
+
+    // Attribution banner should NOT be rendered
+    const attribution = page.locator('[data-testid="playback-attribution"]');
+    await expect(attribution).toHaveCount(0);
+  });
 });

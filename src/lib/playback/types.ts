@@ -75,6 +75,11 @@ export interface PlaybackResponse {
     id: string;
     name: string;
   };
+  license?: string;
+  attribution?: {
+    text: string;
+    url?: string;
+  };
   error?: string;
 }
 

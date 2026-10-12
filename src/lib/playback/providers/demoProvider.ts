@@ -8,25 +8,42 @@ import {
 
 export interface DemoMediaItem {
   id: string;
+  tmdbId?: number;
   title: string;
   description: string;
   year: number;
   duration: number; // in seconds
   poster: string;
   backdrop: string;
+  license?: string;
+  attribution?: {
+    text: string;
+    url?: string;
+  };
   translations: PlaybackTranslation[];
   streamMap: Record<string, PlaybackSource>;
 }
 
+export const TMDB_TO_LICENSED_MEDIA_MAP: Record<string, string> = {
+  '133701': 'tears-of-steel', // Tears of Steel (2012)
+  '10378': 'big-buck-bunny'   // Big Buck Bunny (2008)
+};
+
 export const DEMO_MEDIA_LIBRARY: Record<string, DemoMediaItem> = {
   'tears-of-steel': {
     id: 'tears-of-steel',
+    tmdbId: 133701,
     title: 'Слёзы стали (Tears of Steel)',
     description: 'Открытый научно-фантастический фильм Blender Foundation (2012) в качестве 1080p с адаптивным HLS-потоком.',
     year: 2012,
     duration: 734,
     poster: '/posters/tears-of-steel.svg',
     backdrop: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1600&auto=format&fit=crop',
+    license: 'Creative Commons Attribution 3.0 (CC BY 3.0)',
+    attribution: {
+      text: '(CC) Blender Foundation | mango.blender.org | Ian Hubert',
+      url: 'https://mango.blender.org/'
+    },
     translations: [
       {
         id: 'tos-orig-en',
@@ -81,12 +98,18 @@ export const DEMO_MEDIA_LIBRARY: Record<string, DemoMediaItem> = {
   },
   'big-buck-bunny': {
     id: 'big-buck-bunny',
+    tmdbId: 10378,
     title: 'Большой Бак Банни (Big Buck Bunny)',
     description: 'Классический открытый анимационный фильм Blender Foundation с адаптивным многобитрейтным HLS качеством 1080p/720p/480p.',
     year: 2008,
     duration: 596,
     poster: '/posters/big-buck-bunny.svg',
     backdrop: 'https://images.unsplash.com/photo-1517604931442-7e0c8ed2963c?w=1600&auto=format&fit=crop',
+    license: 'Creative Commons Attribution 3.0 (CC BY 3.0)',
+    attribution: {
+      text: '(CC) Blender Foundation | peach.blender.org | Sacha Goedegebure',
+      url: 'https://peach.blender.org/'
+    },
     translations: [
       {
         id: 'bbb-orig',
@@ -179,10 +202,15 @@ export class DemoLicensedProvider implements MediaProvider {
     const stream = item.streamMap[chosenTranslationId] || Object.values(item.streamMap)[0];
     const currentTranslation = item.translations.find((t) => t.id === chosenTranslationId) || item.translations[0];
 
+    const resolvedMediaId =
+      typeof request.mediaId === 'number' || String(request.mediaId) === String(item.tmdbId)
+        ? request.mediaId
+        : item.id;
+
     return {
       success: true,
       media: {
-        id: item.id,
+        id: resolvedMediaId,
         title: item.title,
         mediaType: request.mediaType,
         season: request.season,
@@ -194,24 +222,32 @@ export class DemoLicensedProvider implements MediaProvider {
       provider: {
         id: this.id,
         name: this.name
-      }
+      },
+      license: item.license,
+      attribution: item.attribution
     };
   }
 
   private resolveKey(request: PlaybackRequest): string | null {
-    // Numeric mediaId (e.g. TMDB ID 969681) is never a demo item
-    if (typeof request.mediaId === 'number') {
+    const idStr = String(request.mediaId).trim().toLowerCase();
+
+    // 1. Explicit mapping for catalog movies with open licenses
+    if (request.mediaType === 'movie' && TMDB_TO_LICENSED_MEDIA_MAP[idStr]) {
+      return TMDB_TO_LICENSED_MEDIA_MAP[idStr];
+    }
+
+    // Numeric mediaId (or numeric string) not mapped above is never a demo item
+    // (e.g. TMDB ID 969681, or string "969681")
+    if (!isNaN(Number(idStr)) && /^\d+$/.test(idStr)) {
       return null;
     }
 
-    const idStr = String(request.mediaId).trim().toLowerCase();
-
-    // Direct match against registered demo library
+    // 2. Direct match against registered demo library (e.g. 'tears-of-steel')
     if (DEMO_MEDIA_LIBRARY[idStr]) {
       return idStr;
     }
 
-    // Match with 'demo-' prefix
+    // 3. Match with 'demo-' prefix
     if (idStr.startsWith('demo-')) {
       const stripped = idStr.replace('demo-', '');
       if (DEMO_MEDIA_LIBRARY[stripped]) {

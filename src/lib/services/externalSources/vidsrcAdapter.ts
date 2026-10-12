@@ -4,17 +4,31 @@ import { isValidExternalIframeUrl } from './allowlist';
 
 /**
  * VidSrc Adapter (https://vidsrc.sh/vidsrc/docs/)
- * Routes:
- *  - Movie: /embed/movie/{tmdbId}
- *  - TV:    /embed/tv/{tmdbId}/{season}/{episode}
  *
- * NOTE:
- *  - Loading of iframe does not prove existence of video content for obscure titles.
- *  - Unconfirmed stream properties (e.g. "1080p", "EN") are strictly NOT claimed.
+ * Current Status:
+ *  - Disabled after confirmed intrusive popup advertising and redirection on iPhone.
+ *  - Preserved in codebase for reference and testing.
  */
 export function getVidSrcSources(request: ExternalSourcesRequest): ExternalSourceItem[] {
   const { tmdbId, type, season = 1, episode = 1 } = request;
-  if (!EXTERNAL_SOURCES_CONFIG.vidsrc.enabled || !tmdbId) {
+
+  // When disabled due to intrusive advertising on iPhone
+  if (!EXTERNAL_SOURCES_CONFIG.vidsrc.enabled) {
+    return [
+      {
+        id: 'vidsrc-disabled',
+        adapter: 'vidsrc',
+        name: 'VidSrc (Отключен)',
+        type: 'iframe',
+        status: 'disabled',
+        badge: 'Реклама',
+        description: 'Внешний плеер VidSrc',
+        diagnostics: EXTERNAL_SOURCES_CONFIG.vidsrc.disabledReason
+      }
+    ];
+  }
+
+  if (!tmdbId) {
     return [];
   }
 
@@ -50,7 +64,7 @@ export function getVidSrcSources(request: ExternalSourcesRequest): ExternalSourc
       iframeUrl,
       season: isTv ? season : undefined,
       episode: isTv ? episode : undefined,
-      badge: 'VidSrc', // Honest: no unverified '1080p' or 'EN' badges
+      badge: 'VidSrc',
       description: isTv
         ? `Международный балансер (Сезон ${season}, Серия ${episode})`
         : 'Международный балансер (выбор дорожек и субтитров внутри плеера)',

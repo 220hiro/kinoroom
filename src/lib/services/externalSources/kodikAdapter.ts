@@ -19,11 +19,30 @@ async function throttleKodikRequest(): Promise<void> {
 
 /**
  * Kodik Adapter using Kinobox API (https://kinobox.tv/api/players?tmdb={id}&sources=kodik)
- * Honors strict rate limits (2 req/s per IP), caching, timeouts, and prevents automatic 1GB redirects.
+ *
+ * Current Status:
+ *  - Preserved in codebase but kept unavailable to users pending full ad/quality/translation verification.
  */
 export async function getKodikSources(request: ExternalSourcesRequest): Promise<ExternalSourceItem[]> {
   const { tmdbId } = request;
-  if (!EXTERNAL_SOURCES_CONFIG.kodik.enabled || !tmdbId) {
+
+  // Kept unavailable to users until full ad, quality and translation audit is complete
+  if (!EXTERNAL_SOURCES_CONFIG.kodik.enabled) {
+    return [
+      {
+        id: 'kodik-testing',
+        adapter: 'kodik',
+        name: 'Kodik (На проверке)',
+        type: 'iframe',
+        status: 'disabled',
+        badge: 'На проверке',
+        description: 'Балансер Kodik',
+        diagnostics: EXTERNAL_SOURCES_CONFIG.kodik.disabledReason
+      }
+    ];
+  }
+
+  if (!tmdbId) {
     return [];
   }
 

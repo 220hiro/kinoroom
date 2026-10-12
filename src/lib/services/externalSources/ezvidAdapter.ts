@@ -5,21 +5,21 @@ import { EXTERNAL_SOURCES_CONFIG } from './config';
  * EzVidAPI Experimental Adapter (https://ezvidapi.com/)
  *
  * Current Status:
- *  - Network test: Returns Cloudflare HTTP 502 Bad Gateway.
+ *  - Network test: Returns Cloudflare HTTP 502 Bad Gateway across all endpoints.
  *  - Legal status: Commercial movie rights and direct HLS conditions unverified.
- *  - Policy: Kept disabled with clear diagnostics. Direct HLS is strictly NOT connected.
+ *  - Policy: Preserved in codebase but kept disabled with honest diagnostics. Direct HLS is strictly NOT connected.
  */
 export async function getEzVidSources(_request: ExternalSourcesRequest): Promise<ExternalSourceItem[]> {
   // If explicitly disabled in configuration (default)
   if (!EXTERNAL_SOURCES_CONFIG.ezvid.enabled) {
     return [
       {
-        id: 'ezvid-disabled',
+        id: 'ezvid-testing',
         adapter: 'ezvid',
-        name: 'EzVidAPI (Экспериментальный)',
+        name: 'EzVidAPI (На проверке)',
         type: 'direct_hls',
         status: 'disabled',
-        badge: 'Отключен',
+        badge: 'На проверке',
         isExperimental: true,
         description: 'Прямые HLS / iframe потоки EzVidAPI',
         diagnostics: EXTERNAL_SOURCES_CONFIG.ezvid.disabledReason
@@ -39,7 +39,7 @@ export async function getEzVidSources(_request: ExternalSourcesRequest): Promise
         {
           id: 'ezvid-down',
           adapter: 'ezvid',
-          name: 'EzVidAPI (Экспериментальный)',
+          name: 'EzVidAPI (На проверке)',
           type: 'direct_hls',
           status: 'unavailable',
           badge: 'HTTP 502',
@@ -54,7 +54,7 @@ export async function getEzVidSources(_request: ExternalSourcesRequest): Promise
       {
         id: 'ezvid-unverified',
         adapter: 'ezvid',
-        name: 'EzVidAPI (Экспериментальный)',
+        name: 'EzVidAPI (На проверке)',
         type: 'direct_hls',
         status: 'disabled',
         badge: 'Проверка прав',
@@ -69,7 +69,7 @@ export async function getEzVidSources(_request: ExternalSourcesRequest): Promise
       {
         id: 'ezvid-error',
         adapter: 'ezvid',
-        name: 'EzVidAPI (Экспериментальный)',
+        name: 'EzVidAPI (На проверке)',
         type: 'direct_hls',
         status: 'unavailable',
         badge: 'Сбой сети',

@@ -546,42 +546,49 @@ test('External Sources: Allowlist validates safe iframe domains and rejects untr
   assert.equal(isValidExternalIframeUrl(null as any), false);
 });
 
-test('External Sources: VidSrc adapter builds correct movie and TV routes with safety checks', async () => {
+test('External Sources: VidSrc adapter is disabled due to confirmed iPhone ads, but generates safe routes when enabled', async () => {
   const { getVidSrcSources } = await import('../src/lib/services/externalSources/vidsrcAdapter');
+  const { EXTERNAL_SOURCES_CONFIG } = await import('../src/lib/services/externalSources/config');
 
-  // 1. Movie route
-  const movieSources = getVidSrcSources({
+  // 1. By default, VidSrc is disabled due to confirmed ads
+  const disabledSources = getVidSrcSources({
     tmdbId: 10331,
     type: 'movie',
     title: 'Night of the Living Dead'
   });
-  assert.equal(movieSources.length, 1);
-  assert.equal(movieSources[0].adapter, 'vidsrc');
-  assert.equal(movieSources[0].status, 'available');
-  assert.equal(movieSources[0].type, 'iframe');
-  assert.equal(movieSources[0].iframeUrl, 'https://vidsrc.sh/embed/movie/10331');
-  assert.equal(movieSources[0].declaredQuality, undefined, 'VidSrc must not claim unconfirmed 1080p stream quality');
-  assert.equal(movieSources[0].badge, 'VidSrc');
+  assert.equal(disabledSources.length, 1);
+  assert.equal(disabledSources[0].adapter, 'vidsrc');
+  assert.equal(disabledSources[0].status, 'disabled');
+  assert.equal(disabledSources[0].badge, 'Реклама');
+  assert.match(disabledSources[0].diagnostics || '', /всплывающей рекламы/);
 
-  // 2. TV Series route with season and episode
-  const tvSources = getVidSrcSources({
-    tmdbId: 1396,
-    type: 'tv',
-    season: 2,
-    episode: 7,
-    title: 'Breaking Bad'
-  });
-  assert.equal(tvSources.length, 1);
-  assert.equal(tvSources[0].adapter, 'vidsrc');
-  assert.equal(tvSources[0].status, 'available');
-  assert.equal(tvSources[0].type, 'iframe');
-  assert.equal(tvSources[0].iframeUrl, 'https://vidsrc.sh/embed/tv/1396/2/7');
-  assert.equal(tvSources[0].season, 2);
-  assert.equal(tvSources[0].episode, 7);
-  assert.match(tvSources[0].name, /S2:E7/);
+  // 2. When enabled for route testing
+  EXTERNAL_SOURCES_CONFIG.vidsrc.enabled = true;
+  try {
+    const movieSources = getVidSrcSources({
+      tmdbId: 10331,
+      type: 'movie',
+      title: 'Night of the Living Dead'
+    });
+    assert.equal(movieSources.length, 1);
+    assert.equal(movieSources[0].status, 'available');
+    assert.equal(movieSources[0].iframeUrl, 'https://vidsrc.sh/embed/movie/10331');
+
+    const tvSources = getVidSrcSources({
+      tmdbId: 1396,
+      type: 'tv',
+      season: 2,
+      episode: 7,
+      title: 'Breaking Bad'
+    });
+    assert.equal(tvSources.length, 1);
+    assert.equal(tvSources[0].iframeUrl, 'https://vidsrc.sh/embed/tv/1396/2/7');
+  } finally {
+    EXTERNAL_SOURCES_CONFIG.vidsrc.enabled = false;
+  }
 });
 
-test('External Sources: Kodik adapter handles rate limits, redirect guards, and honest diagnostics', async () => {
+test('External Sources: Kodik adapter is preserved and kept unavailable to users pending ad/quality audit', async () => {
   const { getKodikSources } = await import('../src/lib/services/externalSources/kodikAdapter');
 
   const kodikResults = await getKodikSources({
@@ -592,15 +599,12 @@ test('External Sources: Kodik adapter handles rate limits, redirect guards, and 
 
   assert.ok(kodikResults.length >= 1);
   assert.equal(kodikResults[0].adapter, 'kodik');
-  assert.equal(kodikResults[0].type, 'iframe');
-
-  // When Kinobox server redirects to selectel 1GB speedtest, the adapter catches it without downloading 1GB
-  if (kodikResults[0].status === 'unavailable') {
-    assert.match(kodikResults[0].diagnostics || '', /Kinobox API|недоступен|ограничен|redirect/);
-  }
+  assert.equal(kodikResults[0].status, 'disabled');
+  assert.equal(kodikResults[0].badge, 'На проверке');
+  assert.match(kodikResults[0].diagnostics || '', /аудита наличия встроенной рекламы/);
 });
 
-test('External Sources: EzVidAPI adapter is disabled by default with diagnostic explanation', async () => {
+test('External Sources: EzVidAPI adapter is preserved and kept disabled pending ad-free/HLS audit', async () => {
   const { getEzVidSources } = await import('../src/lib/services/externalSources/ezvidAdapter');
 
   const ezvidResults = await getEzVidSources({
@@ -612,11 +616,11 @@ test('External Sources: EzVidAPI adapter is disabled by default with diagnostic 
   assert.equal(ezvidResults.length, 1);
   assert.equal(ezvidResults[0].adapter, 'ezvid');
   assert.equal(ezvidResults[0].status, 'disabled');
-  assert.equal(ezvidResults[0].isExperimental, true);
-  assert.match(ezvidResults[0].diagnostics || '', /502 Bad Gateway|отключен|права на коммерческий контент не подтверждены/);
+  assert.equal(ezvidResults[0].badge, 'На проверке');
+  assert.match(ezvidResults[0].diagnostics || '', /Cloudflare 502 Bad Gateway|ad-free HLS/);
 });
 
-test('External Sources API: GET /api/playback/external-sources validates params and aggregates sources', async () => {
+test('External Sources API: GET /api/playback/external-sources validates params and aggregates preserved sources', async () => {
   const { GET } = await import('../src/app/api/playback/external-sources/route');
   const { NextRequest } = await import('next/server');
 

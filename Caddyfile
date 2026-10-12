@@ -1,0 +1,38 @@
+# Caddyfile for KinoRoom All-in-One Deployment
+{$DOMAIN:localhost} {
+    # Compression for static and dynamic text assets (exempting media streams)
+    encode zstd gzip {
+        match {
+            header Content-Type text/* application/json application/javascript
+        }
+    }
+
+    # Security Headers
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "SAMEORIGIN"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+    }
+
+    # Streaming endpoints directed to TorrServer engine
+    # flush_interval -1 disables Caddy buffer delays for instant chunk streaming
+    @torrstream path /stream* /gst*
+    handle @torrstream {
+        reverse_proxy torrserver:8090 {
+            flush_interval -1
+            header_up Host {upstream_hostport}
+            header_up X-Real-IP {remote_host}
+        }
+    }
+
+    # Next.js Application
+    handle {
+        reverse_proxy kinoroom:3000 {
+            header_up Host {upstream_hostport}
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+        }
+    }
+}

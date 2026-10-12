@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import Hls from 'hls.js';
 import {
   Play,
   Pause,
@@ -20,7 +21,10 @@ import {
   Settings,
   Check,
   X,
-  Sparkles
+  Sparkles,
+  Languages,
+  Subtitles,
+  Layers
 } from 'lucide-react';
 import { TorrentStatus, TorrentSearchResult } from '@/lib/types';
 import { formatBytes } from '@/lib/utils';
@@ -50,18 +54,19 @@ function buildTorrServerStreamUrl({
   infoHash,
   preferHls
 }: {
-  baseUrl: string;
+  baseUrl?: string | null;
   magnet: string;
   fileIndex: number;
   infoHash?: string | null;
   preferHls?: boolean;
 }): string {
-  const clean = baseUrl.replace(/\/$/, '');
+  const clean = (baseUrl || '').replace(/\/$/, '');
+  const prefix = clean ? clean : '';
   // TorrServer -gst build provides /gst/{hash}/master.m3u8?index={index}
   if (preferHls && infoHash) {
-    return `${clean}/gst/${infoHash}/master.m3u8?index=${fileIndex}`;
+    return `${prefix}/gst/${infoHash}/master.m3u8?index=${fileIndex}`;
   }
-  return `${clean}/stream?link=${encodeURIComponent(magnet)}&index=${fileIndex}&play`;
+  return `${prefix}/stream?link=${encodeURIComponent(magnet)}&index=${fileIndex}&play`;
 }
 
 export function TorrentPlayer({
@@ -102,6 +107,20 @@ export function TorrentPlayer({
   // Playback speed
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
+
+  // Audio tracks, subtitles, quality selection
+  const hlsRef = useRef<Hls | null>(null);
+  const [audioTracks, setAudioTracks] = useState<{ id: number; name: string; lang?: string }[]>([]);
+  const [selectedAudioTrack, setSelectedAudioTrack] = useState<number>(-1);
+  const [showAudioMenu, setShowAudioMenu] = useState(false);
+
+  const [subtitleTracks, setSubtitleTracks] = useState<{ id: number; name: string; lang?: string }[]>([]);
+  const [selectedSubtitleTrack, setSelectedSubtitleTrack] = useState<number>(-1);
+  const [showSubtitleMenu, setShowSubtitleMenu] = useState(false);
+
+  const [qualityLevels, setQualityLevels] = useState<{ id: number; label: string; height: number }[]>([]);
+  const [selectedQuality, setSelectedQuality] = useState<number>(-1);
+  const [showQualityMenu, setShowQualityMenu] = useState(false);
 
   // External player menu
   const [showExternalMenu, setShowExternalMenu] = useState(false);
@@ -368,15 +387,45 @@ export function TorrentPlayer({
   };
 
   const toggleFullscreen = () => {
-    if (!containerRef.current) return;
-    if (!document.fullscreenElement) {
-      containerRef.current.requestFullscreen().catch(() => {});
-      setIsFullscreen(true);
+    const video = videoRef.current;
+    const container = containerRef.current;
+    if (!container) return;
+
+    const isFs = Boolean(document.fullscreenElement || (document as any).webkitFullscreenElement);
+
+    if (!isFs) {
+      if (container.requestFullscreen) {
+        container.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => {
+          if (video && (video as any).webkitEnterFullscreen) {
+            (video as any).webkitEnterFullscreen();
+            setIsFullscreen(true);
+          }
+        });
+      } else if (video && (video as any).webkitEnterFullscreen) {
+        (video as any).webkitEnterFullscreen();
+        setIsFullscreen(true);
+      }
     } else {
-      document.exitFullscreen().catch(() => {});
-      setIsFullscreen(false);
+      if (document.exitFullscreen) {
+        document.exitFullscreen().then(() => setIsFullscreen(false)).catch(() => {});
+      } else if ((document as any).webkitExitFullscreen) {
+        (document as any).webkitExitFullscreen();
+        setIsFullscreen(false);
+      }
     }
   };
+
+  useEffect(() => {
+    const onFsChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement || (document as any).webkitFullscreenElement));
+    };
+    document.addEventListener('fullscreenchange', onFsChange);
+    document.addEventListener('webkitfullscreenchange', onFsChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', onFsChange);
+      document.removeEventListener('webkitfullscreenchange', onFsChange);
+    };
+  }, []);
 
   const handleSpeedSelect = (rate: number) => {
     setPlaybackSpeed(rate);
@@ -449,6 +498,9 @@ export function TorrentPlayer({
         setShowControls(false);
         setShowSpeedMenu(false);
         setShowExternalMenu(false);
+        setShowAudioMenu(false);
+        setShowSubtitleMenu(false);
+        setShowQualityMenu(false);
       }
     }, 3500);
   };
@@ -477,10 +529,174 @@ export function TorrentPlayer({
     : `/api/torrent/stream?torrent=${encodeURIComponent(magnet)}&file=${selectedFileIndex}`;
 
   useEffect(() => {
-    if (videoRef.current) {
-      videoRef.current.load();
+    const video = videoRef.current;
+    if (!video || !streamSrc) return;
+
+    // Reset tracks & selection
+    setAudioTracks([]);
+    setSubtitleTracks([]);
+    setQualityLevels([]);
+    setSelectedAudioTrack(-1);
+    setSelectedSubtitleTrack(-1);
+    setSelectedQuality(-1);
+
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
     }
+
+    const isHlsStream = streamSrc.includes('.m3u8') || streamSrc.includes('/gst/');
+
+    if (isHlsStream && Hls.isSupported()) {
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: false,
+        backBufferLength: 90,
+      });
+      hlsRef.current = hls;
+
+      hls.loadSource(streamSrc);
+      hls.attachMedia(video);
+
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        if (hls.levels && hls.levels.length > 0) {
+          const lvls = hls.levels.map((lvl, idx) => ({
+            id: idx,
+            label: lvl.height ? `${lvl.height}p` : `${Math.round(lvl.bitrate / 1000)}k`,
+            height: lvl.height || 0,
+          }));
+          setQualityLevels(lvls);
+        }
+      });
+
+      hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, () => {
+        if (hls.audioTracks && hls.audioTracks.length > 0) {
+          const tracks = hls.audioTracks.map((t, idx) => ({
+            id: idx,
+            name: t.name || `Дорожка ${idx + 1}`,
+            lang: t.lang,
+          }));
+          setAudioTracks(tracks);
+          setSelectedAudioTrack(hls.audioTrack);
+        }
+      });
+
+      hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, () => {
+        if (hls.subtitleTracks && hls.subtitleTracks.length > 0) {
+          const subs = hls.subtitleTracks.map((s, idx) => ({
+            id: idx,
+            name: s.name || `Субтитры ${idx + 1}`,
+            lang: s.lang,
+          }));
+          setSubtitleTracks(subs);
+          setSelectedSubtitleTrack(hls.subtitleTrack);
+        }
+      });
+
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal) {
+          switch (data.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              hls.startLoad();
+              break;
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              hls.recoverMediaError();
+              break;
+            default:
+              hls.destroy();
+              break;
+          }
+        }
+      });
+    } else {
+      // Direct stream or Safari native HLS
+      video.src = streamSrc;
+      video.load();
+    }
+
+    const syncNativeTracks = () => {
+      const anyVideo = video as any;
+      if (anyVideo.audioTracks && anyVideo.audioTracks.length > 0) {
+        const natAudio = [];
+        for (let i = 0; i < anyVideo.audioTracks.length; i++) {
+          const tr = anyVideo.audioTracks[i];
+          natAudio.push({
+            id: i,
+            name: tr.label || tr.language || `Дорожка ${i + 1}`,
+            lang: tr.language || undefined,
+          });
+          if (tr.enabled) {
+            setSelectedAudioTrack(i);
+          }
+        }
+        setAudioTracks(natAudio);
+      }
+
+      if (video.textTracks && video.textTracks.length > 0) {
+        const natSubs = [];
+        for (let i = 0; i < video.textTracks.length; i++) {
+          const tr = video.textTracks[i];
+          if (tr.kind === 'subtitles' || tr.kind === 'captions') {
+            natSubs.push({
+              id: i,
+              name: tr.label || tr.language || `Субтитры ${i + 1}`,
+              lang: tr.language || undefined,
+            });
+            if (tr.mode === 'showing') {
+              setSelectedSubtitleTrack(i);
+            }
+          }
+        }
+        if (natSubs.length > 0) {
+          setSubtitleTracks(natSubs);
+        }
+      }
+    };
+
+    video.addEventListener('loadedmetadata', syncNativeTracks);
+
+    return () => {
+      video.removeEventListener('loadedmetadata', syncNativeTracks);
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+    };
   }, [streamSrc]);
+
+  const handleSelectAudioTrack = (trackId: number) => {
+    setSelectedAudioTrack(trackId);
+    if (hlsRef.current) {
+      hlsRef.current.audioTrack = trackId;
+    } else if (videoRef.current && (videoRef.current as any).audioTracks) {
+      const tracks = (videoRef.current as any).audioTracks;
+      for (let i = 0; i < tracks.length; i++) {
+        tracks[i].enabled = i === trackId;
+      }
+    }
+    setShowAudioMenu(false);
+  };
+
+  const handleSelectSubtitleTrack = (trackId: number) => {
+    setSelectedSubtitleTrack(trackId);
+    if (hlsRef.current) {
+      hlsRef.current.subtitleTrack = trackId;
+    } else if (videoRef.current && videoRef.current.textTracks) {
+      const tracks = videoRef.current.textTracks;
+      for (let i = 0; i < tracks.length; i++) {
+        tracks[i].mode = i === trackId ? 'showing' : 'disabled';
+      }
+    }
+    setShowSubtitleMenu(false);
+  };
+
+  const handleSelectQuality = (qualityId: number) => {
+    setSelectedQuality(qualityId);
+    if (hlsRef.current) {
+      hlsRef.current.currentLevel = qualityId;
+    }
+    setShowQualityMenu(false);
+  };
 
   const getFullStreamUrl = () => {
     if (typeof window === 'undefined') return streamSrc;
@@ -520,7 +736,7 @@ export function TorrentPlayer({
       {/* Native Video Element */}
       <video
         ref={videoRef}
-        src={streamSrc}
+        crossOrigin="anonymous"
         onTimeUpdate={handleTimeUpdate}
         onPlay={() => {
           setIsPlaying(true);
@@ -809,7 +1025,162 @@ export function TorrentPlayer({
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5 sm:gap-3">
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            {/* Audio Tracks */}
+            {audioTracks.length > 0 && (
+              <div className="relative">
+                <button
+                  onClick={() => {
+                    setShowAudioMenu(!showAudioMenu);
+                    setShowSubtitleMenu(false);
+                    setShowQualityMenu(false);
+                    setShowSpeedMenu(false);
+                  }}
+                  className={`flex items-center gap-1 text-[11px] sm:text-xs font-semibold px-1.5 sm:px-2 py-0.5 sm:py-1 rounded transition-colors cursor-pointer ${
+                    selectedAudioTrack >= 0 ? 'bg-blue-600/30 text-blue-300 border border-blue-500/30' : 'bg-white/10 hover:bg-white/20 text-gray-300'
+                  }`}
+                  title="Аудиодорожки"
+                >
+                  <Languages className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                  <span className="hidden sm:inline">Аудио</span>
+                </button>
+
+                {showAudioMenu && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-20"
+                      onClick={() => setShowAudioMenu(false)}
+                    />
+                    <div className="absolute right-0 bottom-full mb-2 bg-[#12141f] border border-white/15 rounded-xl shadow-2xl p-1 z-30 flex flex-col gap-0.5 min-w-[140px] max-w-[200px]">
+                      {audioTracks.map((tr) => (
+                        <button
+                          key={tr.id}
+                          onClick={() => handleSelectAudioTrack(tr.id)}
+                          className={`px-3 py-1.5 rounded text-xs text-left truncate transition-colors cursor-pointer ${
+                            selectedAudioTrack === tr.id
+                              ? 'bg-blue-600 text-white font-bold'
+                              : 'text-gray-300 hover:bg-white/10 hover:text-white'
+                          }`}
+                        >
+                          {tr.name} {tr.lang ? `(${tr.lang})` : ''}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* Subtitles */}
+            {subtitleTracks.length > 0 && (
+              <div className="relative">
+                <button
+                  onClick={() => {
+                    setShowSubtitleMenu(!showSubtitleMenu);
+                    setShowAudioMenu(false);
+                    setShowQualityMenu(false);
+                    setShowSpeedMenu(false);
+                  }}
+                  className={`flex items-center gap-1 text-[11px] sm:text-xs font-semibold px-1.5 sm:px-2 py-0.5 sm:py-1 rounded transition-colors cursor-pointer ${
+                    selectedSubtitleTrack >= 0 ? 'bg-purple-600/30 text-purple-300 border border-purple-500/30' : 'bg-white/10 hover:bg-white/20 text-gray-300'
+                  }`}
+                  title="Субтитры"
+                >
+                  <Subtitles className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                  <span className="hidden sm:inline">Субтитры</span>
+                </button>
+
+                {showSubtitleMenu && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-20"
+                      onClick={() => setShowSubtitleMenu(false)}
+                    />
+                    <div className="absolute right-0 bottom-full mb-2 bg-[#12141f] border border-white/15 rounded-xl shadow-2xl p-1 z-30 flex flex-col gap-0.5 min-w-[140px] max-w-[200px]">
+                      <button
+                        onClick={() => handleSelectSubtitleTrack(-1)}
+                        className={`px-3 py-1.5 rounded text-xs text-left transition-colors cursor-pointer ${
+                          selectedSubtitleTrack === -1
+                            ? 'bg-purple-600 text-white font-bold'
+                            : 'text-gray-300 hover:bg-white/10 hover:text-white'
+                        }`}
+                      >
+                        Отключены
+                      </button>
+                      {subtitleTracks.map((sub) => (
+                        <button
+                          key={sub.id}
+                          onClick={() => handleSelectSubtitleTrack(sub.id)}
+                          className={`px-3 py-1.5 rounded text-xs text-left truncate transition-colors cursor-pointer ${
+                            selectedSubtitleTrack === sub.id
+                              ? 'bg-purple-600 text-white font-bold'
+                              : 'text-gray-300 hover:bg-white/10 hover:text-white'
+                          }`}
+                        >
+                          {sub.name} {sub.lang ? `(${sub.lang})` : ''}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* Quality Levels */}
+            {qualityLevels.length > 0 && (
+              <div className="relative">
+                <button
+                  onClick={() => {
+                    setShowQualityMenu(!showQualityMenu);
+                    setShowAudioMenu(false);
+                    setShowSubtitleMenu(false);
+                    setShowSpeedMenu(false);
+                  }}
+                  className={`flex items-center gap-1 text-[11px] sm:text-xs font-semibold px-1.5 sm:px-2 py-0.5 sm:py-1 rounded transition-colors cursor-pointer ${
+                    selectedQuality >= 0 ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-500/30' : 'bg-white/10 hover:bg-white/20 text-gray-300'
+                  }`}
+                  title="Качество видео"
+                >
+                  <Layers className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                  <span>{selectedQuality === -1 ? 'Авто' : qualityLevels[selectedQuality]?.label || 'Качество'}</span>
+                </button>
+
+                {showQualityMenu && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-20"
+                      onClick={() => setShowQualityMenu(false)}
+                    />
+                    <div className="absolute right-0 bottom-full mb-2 bg-[#12141f] border border-white/15 rounded-xl shadow-2xl p-1 z-30 flex flex-col gap-0.5 min-w-[120px]">
+                      <button
+                        onClick={() => handleSelectQuality(-1)}
+                        className={`px-3 py-1.5 rounded text-xs text-left transition-colors cursor-pointer ${
+                          selectedQuality === -1
+                            ? 'bg-emerald-600 text-white font-bold'
+                            : 'text-gray-300 hover:bg-white/10 hover:text-white'
+                        }`}
+                      >
+                        Авто
+                      </button>
+                      {qualityLevels.map((lvl) => (
+                        <button
+                          key={lvl.id}
+                          onClick={() => handleSelectQuality(lvl.id)}
+                          className={`px-3 py-1.5 rounded text-xs text-left transition-colors cursor-pointer ${
+                            selectedQuality === lvl.id
+                              ? 'bg-emerald-600 text-white font-bold'
+                              : 'text-gray-300 hover:bg-white/10 hover:text-white'
+                          }`}
+                        >
+                          {lvl.label}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
             {/* Speed selector */}
             <div className="relative">
               <button

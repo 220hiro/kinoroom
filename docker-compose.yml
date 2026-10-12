@@ -1,0 +1,73 @@
+services:
+  caddy:
+    image: caddy:2.8-alpine
+    container_name: kinoroom_caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      kinoroom:
+        condition: service_healthy
+      torrserver:
+        condition: service_started
+    networks:
+      - kinoroom_net
+
+  kinoroom:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kinoroom_app
+    restart: unless-stopped
+    expose:
+      - "3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+      - TORRSERVER_URL=http://torrserver:8090
+      - TMDB_API_KEY=${TMDB_API_KEY:-}
+      - AUTH_SECRET=${AUTH_SECRET:-kinoroom_secure_default_key}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    depends_on:
+      - torrserver
+    networks:
+      - kinoroom_net
+
+  torrserver:
+    image: tsdc/torrserver:matriX.134
+    container_name: kinoroom_torrserver
+    restart: unless-stopped
+    expose:
+      - "8090"
+    environment:
+      - TS_PORT=8090
+      - TS_DONTKILL=1
+      # 500 MB RAM cache limit - prevents OOM on budget VPS and protects SSD from wear
+      - TS_CACHE_SIZE=524288000
+      - TS_TORR_DIR=/torrserver/torrents
+      - TS_SAVE_PATH=/torrserver/db
+    volumes:
+      - torrserver_data:/torrserver
+    networks:
+      - kinoroom_net
+
+networks:
+  kinoroom_net:
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:
+  torrserver_data:

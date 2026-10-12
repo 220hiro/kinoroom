@@ -24,6 +24,8 @@
 - Сборка: `npm run build`
 - Запуск production: `npm run start`
 - Проверка типов: `npm run typecheck`
+- Запуск в Docker: `docker compose up -d --build`
+- Развертывание на VPS: `bash deploy.sh`
 
 ## Rules and gotchas
 
@@ -36,3 +38,4 @@
 
 - [AI context](docs/AI_CONTEXT.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [VPS Migration Guide](docs/VPS_MIGRATION_GUIDE.md)

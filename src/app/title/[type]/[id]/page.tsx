@@ -415,25 +415,25 @@ export default function TitlePage({ params }: TitlePageProps) {
                 }`}
               >
                 <Magnet className="w-4 h-4 shrink-0 text-current" />
-                <span className="truncate">🧲 Торренты (Без рекламы)</span>
+                <span className="truncate">Плеер КиноРум (Без рекламы)</span>
               </button>
 
               <button
                 onClick={() => setActiveTab('online')}
-                className={`flex items-center justify-center gap-2 px-3 sm:px-5 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all cursor-pointer text-center ${
+                className={`flex items-center justify-center gap-2 px-3 sm:px-5 py-2.5 rounded-xl font-medium text-xs sm:text-sm transition-all cursor-pointer text-center ${
                   activeTab === 'online'
-                    ? 'bg-red-600 text-white shadow-lg shadow-red-600/30'
+                    ? 'bg-white/20 text-white shadow-lg border border-white/20'
                     : 'bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white border border-white/5'
                 }`}
               >
                 <Radio className="w-4 h-4 shrink-0" />
-                <span className="truncate">⚡ Онлайн-плееры</span>
+                <span className="truncate">Резервные балансеры (с рекламой)</span>
               </button>
             </div>
 
             <div className="text-[11px] sm:text-xs text-gray-400 text-center sm:text-right">
-              {activeTab === 'torrent' && 'Прямая чистая трансляция без единой рекламы'}
-              {activeTab === 'online' && 'Мгновенный просмотр через внешние веб-серверы'}
+              {activeTab === 'torrent' && 'Прямой чистый стриминг 1080p/4K без сторонней рекламы'}
+              {activeTab === 'online' && 'Внешние веб-источники (могут содержать рекламу провайдеров)'}
             </div>
           </div>
 

@@ -426,3 +426,101 @@ test('Live CDN HLS Manifest Reachability Test', async () => {
     console.warn('Network fetch skipped or offline:', err?.message);
   }
 });
+
+test('OpenMediaProvider resolves Night of the Living Dead (TMDB 10331) with Public Domain attribution', async () => {
+  const result = await playbackRegistry.resolve({
+    mediaId: 10331,
+    mediaType: 'movie'
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.media.id, 10331);
+  assert.match(result.media.title, /Night of the Living Dead|Ночь живых мертвецов/);
+  assert.equal(result.stream.type, 'webm');
+  assert.match(result.stream.url, /Night_of_the_Living_Dead/);
+  assert.match(result.stream.url, /upload\.wikimedia\.org/);
+  assert.match(result.license || '', /Общественное достояние|Public Domain/);
+  assert.ok(result.attribution);
+  assert.match(result.attribution!.text, /Джордж А\. Ромеро|George A\. Romero/);
+  assert.equal(result.provider.id, 'open-media');
+  assert.equal(result.stream.audioTracks.length, 1);
+  assert.equal(result.stream.audioTracks[0].lang, 'en');
+  assert.equal(result.stream.subtitles.length, 0); // No fabricated subtitles
+});
+
+test('OpenMediaProvider resolves Charade (TMDB 4808) with Public Domain attribution', async () => {
+  const result = await playbackRegistry.resolve({
+    mediaId: 4808,
+    mediaType: 'movie'
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.media.id, 4808);
+  assert.match(result.media.title, /Charade|Шарада/);
+  assert.equal(result.stream.type, 'webm');
+  assert.match(result.stream.url, /Charade/);
+  assert.match(result.license || '', /Общественное достояние|Public Domain/);
+  assert.ok(result.attribution);
+  assert.match(result.attribution!.text, /Стэнли Донен|Stanley Donen/);
+  assert.equal(result.provider.id, 'open-media');
+});
+
+test('OpenMediaDiscoveryService: Trailer detection heuristic rejects trailers and clips', async () => {
+  const { openMediaDiscoveryService } = await import('../src/lib/playback/providers/openMediaProvider');
+
+  // Should identify as trailers
+  assert.equal(openMediaDiscoveryService.isTrailer('Night Of The Living Dead (1968) - trailer.webm'), true);
+  assert.equal(openMediaDiscoveryService.isTrailer('The_Killers_1964_Trailer.webm'), true);
+  assert.equal(openMediaDiscoveryService.isTrailer('Official_Movie_Teaser_HD.mp4'), true);
+  assert.equal(openMediaDiscoveryService.isTrailer('Preview_clip_sample.webm'), true);
+  assert.equal(openMediaDiscoveryService.isTrailer('Официальный_трейлер.mp4'), true);
+
+  // Should identify as full feature film
+  assert.equal(openMediaDiscoveryService.isTrailer('Night of the Living Dead (1968).webm'), false);
+  assert.equal(openMediaDiscoveryService.isTrailer('Charade (Stanley Donen, 1963).webm'), false);
+  assert.equal(openMediaDiscoveryService.isTrailer('1938. Александр Невский.webm'), false);
+});
+
+test('OpenMediaDiscoveryService: License verification allows CC-BY/CC-BY-SA/PD and rejects proprietary/NC', async () => {
+  const { openMediaDiscoveryService } = await import('../src/lib/playback/providers/openMediaProvider');
+
+  // Permitted
+  assert.equal(openMediaDiscoveryService.isPermittedLicense('Public domain', 'Public domain in the US'), true);
+  assert.equal(openMediaDiscoveryService.isPermittedLicense('CC0 1.0 Universal', 'Public Domain Dedication'), true);
+  assert.equal(openMediaDiscoveryService.isPermittedLicense('CC BY 3.0', 'Attribution required'), true);
+  assert.equal(openMediaDiscoveryService.isPermittedLicense('CC BY-SA 4.0', 'Attribution-ShareAlike'), true);
+
+  // Rejected
+  assert.equal(openMediaDiscoveryService.isPermittedLicense('CC BY-NC 4.0', 'Non-commercial only'), false);
+  assert.equal(openMediaDiscoveryService.isPermittedLicense('CC BY-ND 3.0', 'No derivatives allowed'), false);
+  assert.equal(openMediaDiscoveryService.isPermittedLicense('All rights reserved', 'Copyrighted'), false);
+  assert.equal(openMediaDiscoveryService.isPermittedLicense('', ''), false);
+});
+
+test('OpenMediaDiscoveryService: Evaluates The Cosmonaut (TMDB 86817) and rejects due to lack of full stream', async () => {
+  const { openMediaDiscoveryService } = await import('../src/lib/playback/providers/openMediaProvider');
+
+  const evalResult = await openMediaDiscoveryService.discoverByTmdbId(86817);
+  assert.equal(evalResult.tmdbId, 86817);
+  assert.equal(evalResult.status, 'REJECTED');
+  assert.equal(evalResult.isLegallyPermitted, true); // License statement is CC BY-SA
+  assert.equal(evalResult.isTechnicallyAccessible, false); // No direct full video file available
+  assert.match(evalResult.reason || '', /thecosmonaut\.org/);
+  assert.match(evalResult.reason || '', /видеофайл фильма на сайте отсутствует|разбит на разрозненные исходные фрагменты/);
+});
+
+test('OpenMediaDiscoveryService: SSRF and host allowlist enforcement', async () => {
+  const { openMediaDiscoveryService } = await import('../src/lib/playback/providers/openMediaProvider');
+
+  // Forbidden targets (internal IPs, localhost, random domains)
+  assert.equal(await openMediaDiscoveryService.verifyTechnicalAccessibility('http://localhost:3000/secret'), false);
+  assert.equal(await openMediaDiscoveryService.verifyTechnicalAccessibility('http://192.168.1.1/admin'), false);
+  assert.equal(await openMediaDiscoveryService.verifyTechnicalAccessibility('http://169.254.169.254/latest/meta-data/'), false);
+  assert.equal(await openMediaDiscoveryService.verifyTechnicalAccessibility('https://evil-hacker.com/video.mp4'), false);
+
+  // Allowed CDN host (valid reachability check with HTTP 206 Partial Content)
+  const validUrl =
+    'https://upload.wikimedia.org/wikipedia/commons/transcoded/2/24/Night_of_the_Living_Dead_(1968).webm/Night_of_the_Living_Dead_(1968).webm.720p.vp9.webm';
+  const isAccessible = await openMediaDiscoveryService.verifyTechnicalAccessibility(validUrl);
+  assert.equal(isAccessible, true, 'Wikimedia Commons video transcode must be reachable via range request');
+});

@@ -5,12 +5,14 @@ import {
 } from './types';
 import { DemoLicensedProvider } from './providers/demoProvider';
 import { TorrServerProvider } from './providers/torrServerProvider';
+import { OpenMediaProvider } from './providers/openMediaProvider';
 
 class MediaProviderRegistry {
   private providers: Map<string, MediaProvider> = new Map();
 
   constructor() {
     // Register default built-in providers
+    this.registerProvider(new OpenMediaProvider());
     this.registerProvider(new DemoLicensedProvider());
     this.registerProvider(new TorrServerProvider());
   }

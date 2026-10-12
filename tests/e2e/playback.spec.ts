@@ -536,4 +536,73 @@ test.describe('KinoRoom Player & Playback API E2E', () => {
     const attribution = page.locator('[data-testid="playback-attribution"]');
     await expect(attribution).toHaveCount(0);
   });
+
+  test('API Discovery: GET /api/playback/discover?tmdbId=10331 returns approved Public Domain metadata', async ({ request }) => {
+    const res = await request.get('/api/playback/discover?tmdbId=10331');
+    expect(res.ok()).toBe(true);
+    const json = await res.json();
+    expect(json.success).toBe(true);
+    expect(json.discovery.tmdbId).toBe(10331);
+    expect(json.discovery.status).toBe('APPROVED');
+    expect(json.discovery.isLegallyPermitted).toBe(true);
+    expect(json.discovery.isTechnicallyAccessible).toBe(true);
+    expect(json.discovery.isTrailer).toBe(false);
+    expect(json.discovery.durationSeconds).toBeGreaterThanOrEqual(3600);
+    expect(json.discovery.streamUrl).toContain('upload.wikimedia.org');
+  });
+
+  test('API Discovery: GET /api/playback/discover?tmdbId=86817 evaluates The Cosmonaut and returns REJECTED status', async ({ request }) => {
+    const res = await request.get('/api/playback/discover?tmdbId=86817');
+    expect(res.ok()).toBe(true);
+    const json = await res.json();
+    expect(json.success).toBe(true);
+    expect(json.discovery.tmdbId).toBe(86817);
+    expect(json.discovery.status).toBe('REJECTED');
+    expect(json.discovery.isTechnicallyAccessible).toBe(false);
+    expect(json.discovery.reason).toMatch(/thecosmonaut\.org/);
+  });
+
+  test('Catalog: Night of the Living Dead (/title/movie/10331) loads KinoRoomPlayer with Public Domain attribution', async ({ page, browserName }) => {
+    await page.goto('/title/movie/10331');
+
+    // Title header
+    await expect(page.locator('h1')).toContainText(/Night of the Living Dead|Ночь живых мертвецов/i);
+
+    // Player container
+    const playerContainer = page.locator('#media-player-container');
+    await expect(playerContainer).toBeVisible();
+
+    // Attribution banner with Public Domain license
+    const attribution = page.locator('[data-testid="playback-attribution"]');
+    await expect(attribution).toBeVisible({ timeout: 15_000 });
+    await expect(attribution).toContainText(/Ромеро|Romero|Wikimedia/i);
+    await expect(attribution).toContainText(/Общественное достояние|Public Domain/i);
+
+    // Video player element
+    const videoLocator = page.locator('video');
+    await expect(videoLocator).toBeVisible();
+
+    if (!(browserName === 'webkit' && process.platform === 'win32')) {
+      await page.waitForFunction(() => {
+        const v = document.querySelector('video');
+        return v && v.duration > 0;
+      }, null, { timeout: 25_000 });
+    }
+  });
+
+  test('Catalog: The Cosmonaut (/title/movie/86817) shows honest unavailable message without fake demo fallback', async ({ page }) => {
+    await page.goto('/title/movie/86817');
+
+    // The unavailable fallback container in native tab
+    const fallbackMessage = page.locator('text=Прямой открытый HLS-поток не обнаружен');
+    await expect(fallbackMessage).toBeVisible({ timeout: 15_000 });
+
+    // Video player should NOT be rendered
+    const videoLocator = page.locator('video');
+    await expect(videoLocator).toHaveCount(0);
+
+    // Attribution banner should NOT be rendered
+    const attribution = page.locator('[data-testid="playback-attribution"]');
+    await expect(attribution).toHaveCount(0);
+  });
 });

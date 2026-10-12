@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export type PlaybackStreamType = 'hls' | 'mp4';
+export type PlaybackStreamType = 'hls' | 'mp4' | 'webm';
 
 export interface PlaybackQuality {
   id: string;

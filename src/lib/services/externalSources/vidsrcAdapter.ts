@@ -8,7 +8,9 @@ import { isValidExternalIframeUrl } from './allowlist';
  *  - Movie: /embed/movie/{tmdbId}
  *  - TV:    /embed/tv/{tmdbId}/{season}/{episode}
  *
- * NOTE: Loading of iframe does not prove existence of video content for obscure titles.
+ * NOTE:
+ *  - Loading of iframe does not prove existence of video content for obscure titles.
+ *  - Unconfirmed stream properties (e.g. "1080p", "EN") are strictly NOT claimed.
  */
 export function getVidSrcSources(request: ExternalSourcesRequest): ExternalSourceItem[] {
   const { tmdbId, type, season = 1, episode = 1 } = request;
@@ -42,19 +44,18 @@ export function getVidSrcSources(request: ExternalSourcesRequest): ExternalSourc
     {
       id: isTv ? `vidsrc-s${season}e${episode}` : 'vidsrc-movie',
       adapter: 'vidsrc',
-      name: isTv ? `VidSrc (S${season}:E${episode})` : 'VidSrc Global (1080p)',
+      name: isTv ? `VidSrc (S${season}:E${episode})` : 'VidSrc Global',
       type: 'iframe',
       status: 'available',
       iframeUrl,
       season: isTv ? season : undefined,
       episode: isTv ? episode : undefined,
-      declaredQuality: '1080p',
-      badge: '1080p / EN',
+      badge: 'VidSrc', // Honest: no unverified '1080p' or 'EN' badges
       description: isTv
-        ? `Международный плеер (Сезон ${season}, Серия ${episode})`
-        : 'Оригинальная звуковая дорожка, субтитры',
+        ? `Международный балансер (Сезон ${season}, Серия ${episode})`
+        : 'Международный балансер (выбор дорожек и субтитров внутри плеера)',
       diagnostics:
-        'Внешний iframe VidSrc. Может содержать стороннюю рекламу провайдера. Успешная загрузка контейнера не является подтверждением наличия видео в базе.'
+        'Внешний iframe VidSrc. Не подтверждает автоматически фактическое разрешение потока. Встраивается без sandbox по спецификации провайдера.'
     }
   ];
 }

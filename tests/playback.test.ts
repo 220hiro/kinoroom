@@ -560,7 +560,8 @@ test('External Sources: VidSrc adapter builds correct movie and TV routes with s
   assert.equal(movieSources[0].status, 'available');
   assert.equal(movieSources[0].type, 'iframe');
   assert.equal(movieSources[0].iframeUrl, 'https://vidsrc.sh/embed/movie/10331');
-  assert.equal(movieSources[0].declaredQuality, '1080p');
+  assert.equal(movieSources[0].declaredQuality, undefined, 'VidSrc must not claim unconfirmed 1080p stream quality');
+  assert.equal(movieSources[0].badge, 'VidSrc');
 
   // 2. TV Series route with season and episode
   const tvSources = getVidSrcSources({

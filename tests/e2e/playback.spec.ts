@@ -632,12 +632,13 @@ test.describe('KinoRoom Player & Playback API E2E', () => {
     await expect(onlineContainer).toBeVisible({ timeout: 10_000 });
 
     // Verify presence of buttons for external adapters
-    await expect(page.locator('button:has-text("VidSrc")')).toBeVisible();
+    await expect(page.locator('button:has-text("VidSrc Global")')).toBeVisible();
     await expect(page.locator('button:has-text("EzVidAPI")')).toBeVisible();
 
-    // Check that VidSrc iframe is mounted
+    // Check that VidSrc iframe is mounted without sandbox attribute per provider requirement
     const vidsrcIframe = page.locator('iframe[src*="vidsrc.sh/embed/movie/10331"]');
     await expect(vidsrcIframe).toBeVisible();
+    await expect(vidsrcIframe).not.toHaveAttribute('sandbox');
 
     // Switch to EzVidAPI (which is disabled)
     const ezvidBtn = page.locator('button:has-text("EzVidAPI")');

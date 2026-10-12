@@ -71,7 +71,7 @@ export const DEMO_MEDIA_LIBRARY: Record<string, DemoMediaItem> = {
             id: 'sub-ru',
             lang: 'ru',
             label: 'Русские',
-            url: 'https://raw.githubusercontent.com/brenopolanski/html5-video-webvtt-example/master/subtitles-en.vtt',
+            url: '/subtitles/subtitles-ru.vtt',
             format: 'vtt',
             isDefault: false
           },
@@ -79,7 +79,7 @@ export const DEMO_MEDIA_LIBRARY: Record<string, DemoMediaItem> = {
             id: 'sub-en',
             lang: 'en',
             label: 'English',
-            url: 'https://raw.githubusercontent.com/brenopolanski/html5-video-webvtt-example/master/subtitles-en.vtt',
+            url: '/subtitles/subtitles-en.vtt',
             format: 'vtt',
             isDefault: false
           }
@@ -102,7 +102,7 @@ export const DEMO_MEDIA_LIBRARY: Record<string, DemoMediaItem> = {
             id: 'sub-en',
             lang: 'en',
             label: 'English',
-            url: 'https://raw.githubusercontent.com/brenopolanski/html5-video-webvtt-example/master/subtitles-en.vtt',
+            url: '/subtitles/subtitles-en.vtt',
             format: 'vtt',
             isDefault: true
           }
@@ -196,7 +196,7 @@ export const DEMO_MEDIA_LIBRARY: Record<string, DemoMediaItem> = {
             id: 'sub-en',
             lang: 'en',
             label: 'English',
-            url: 'https://raw.githubusercontent.com/brenopolanski/html5-video-webvtt-example/master/subtitles-en.vtt',
+            url: '/subtitles/subtitles-en.vtt',
             format: 'vtt',
             isDefault: true
           }

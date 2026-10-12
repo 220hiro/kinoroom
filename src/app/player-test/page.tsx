@@ -258,6 +258,7 @@ export default function PlayerTestPage() {
               onTranslationChange={handleTranslationChange}
               onRefreshStream={() => loadStream(selectedDemoKey)}
               autoPlay={false}
+              showSubtitleDiagnostics={true}
             />
           ) : (
             <div className="w-full aspect-video rounded-xl bg-black/60 flex flex-col items-center justify-center gap-2 p-4 text-center">

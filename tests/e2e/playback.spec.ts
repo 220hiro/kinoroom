@@ -336,6 +336,77 @@ test.describe('KinoRoom Player & Playback API E2E', () => {
     expect(hlsCount).toBe(1);
   });
 
+  test('Safari Bidirectional Subtitle Track Synchronization and Dev Diagnostics in /player-test', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/player-test');
+
+    const videoLocator = page.locator('video');
+    await expect(videoLocator).toBeVisible({ timeout: 15_000 });
+
+    // 1. Verify Subtitle Diagnostics Panel is visible on /player-test
+    const diagPanel = page.locator('[data-testid="subtitle-diagnostic-panel"]');
+    await expect(diagPanel).toBeVisible({ timeout: 10_000 });
+    await expect(diagPanel).toContainText('Диагностика субтитров Safari & WebVTT');
+
+    // 2. Initial state: OFF
+    await expect(diagPanel).toContainText('KinoRoom: off');
+
+    // 3. User selects "Русские" in KinoRoom UI
+    const settingsButton = page.locator('button[title="Настройки"]');
+    await settingsButton.click();
+    await page.locator('button:has-text("Русские")').click();
+
+    // Verify diagnostic panel updates to Russian
+    await expect(diagPanel).toContainText('KinoRoom: sub-ru');
+
+    // Verify track mode in video.textTracks is 'showing'
+    const ruMode = await page.evaluate(() => {
+      const v = document.querySelector('video');
+      const ru = Array.from(v?.textTracks || []).find((t) => t.label === 'Русские');
+      return ru?.mode;
+    });
+    expect(ruMode).toBe('showing');
+
+    // 4. Simulate Safari Native Fullscreen Track Switch (e.g. user selected English in native AVPlayer)
+    await page.evaluate(() => {
+      const v = document.querySelector('video');
+      if (!v || !v.textTracks) return;
+      for (let i = 0; i < v.textTracks.length; i++) {
+        const tr = v.textTracks[i];
+        if (tr.label === 'English') {
+          tr.mode = 'showing';
+        } else {
+          tr.mode = 'disabled';
+        }
+      }
+      // Safari dispatches change event on textTracks:
+      v.textTracks.dispatchEvent(new Event('change'));
+    });
+
+    // KinoRoom UI & Diagnostics panel must immediately synchronize to English!
+    await expect(diagPanel).toContainText('KinoRoom: sub-en', { timeout: 5000 });
+
+    // 5. Simulate Safari Native Fullscreen Track Switch to OFF
+    await page.evaluate(() => {
+      const v = document.querySelector('video');
+      if (!v || !v.textTracks) return;
+      for (let i = 0; i < v.textTracks.length; i++) {
+        v.textTracks[i].mode = 'disabled';
+      }
+      v.textTracks.dispatchEvent(new Event('change'));
+    });
+
+    // KinoRoom UI & Diagnostics panel must immediately synchronize to OFF!
+    await expect(diagPanel).toContainText('KinoRoom: off', { timeout: 5000 });
+
+    // 6. Verify diagnostic object is available on window for automated auditing
+    const windowDiag = await page.evaluate(() => (window as any).__kinoRoomSubtitleDiagnostics);
+    expect(windowDiag).not.toBeNull();
+    expect(windowDiag.selectedSubtitleTrack).toBe('off');
+    expect(windowDiag.tracks.length).toBeGreaterThan(0);
+    expect(windowDiag.recentEvents.length).toBeGreaterThan(0);
+  });
+
   test('UI /player-test: Loads real HLS video, plays, advances currentTime and performs seek without MediaError', async ({ page, browserName }) => {
     // Note: Playwright WebKit on Windows does not bundle GStreamer HLS codecs. Real Safari on iPhone uses AVFoundation.
     if (browserName === 'webkit' && process.platform === 'win32') {

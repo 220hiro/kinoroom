@@ -32,6 +32,27 @@ import {
   PlaybackQuality
 } from '@/lib/playback/types';
 
+export interface SubtitleTrackDiagnostic {
+  id: string;
+  label: string;
+  language: string;
+  kind: string;
+  mode: string;
+  readyState: number;
+  readyStateLabel: string;
+  cuesCount: number;
+  activeCuesCount: number;
+  activeCueTexts: string[];
+}
+
+export interface SubtitleDiagnosticData {
+  selectedSubtitleTrack: string;
+  isFullscreen: boolean;
+  isNativeFullscreen: boolean;
+  tracks: SubtitleTrackDiagnostic[];
+  recentEvents: string[];
+}
+
 interface KinoRoomPlayerProps {
   playbackData: PlaybackResponse;
   initialTime?: number;
@@ -39,6 +60,8 @@ interface KinoRoomPlayerProps {
   onTranslationChange?: (translationId: string, currentTime: number) => Promise<PlaybackResponse | void>;
   onRefreshStream?: () => Promise<PlaybackResponse | void>;
   autoPlay?: boolean;
+  showSubtitleDiagnostics?: boolean;
+  onSubtitleDiagnosticsUpdate?: (diag: SubtitleDiagnosticData) => void;
 }
 
 export function KinoRoomPlayer({
@@ -47,7 +70,9 @@ export function KinoRoomPlayer({
   onTimeUpdate,
   onTranslationChange,
   onRefreshStream,
-  autoPlay = false
+  autoPlay = false,
+  showSubtitleDiagnostics = false,
+  onSubtitleDiagnosticsUpdate
 }: KinoRoomPlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -161,11 +186,130 @@ export function KinoRoomPlayer({
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
+  // Flag to suppress echo loop during programmatic subtitle switching
+  const isApplyingSubtitleModeRef = useRef<boolean>(false);
+  const recentEventsRef = useRef<string[]>([]);
+
+  // Subtitle Diagnostics State
+  const [subtitleDiagnostics, setSubtitleDiagnostics] = useState<SubtitleDiagnosticData>({
+    selectedSubtitleTrack: 'off',
+    isFullscreen: false,
+    isNativeFullscreen: false,
+    tracks: [],
+    recentEvents: []
+  });
+
+  const logSubtitleEvent = useCallback((event: string) => {
+    const timeStr = new Date().toLocaleTimeString('ru-RU', { hour12: false });
+    const line = `[${timeStr}] ${event}`;
+    recentEventsRef.current = [line, ...recentEventsRef.current.slice(0, 19)];
+  }, []);
+
+  // Matching helper: 100% reliable across DOM identity, track id, label, and language code
+  const isTrackMatchingSubtitle = useCallback(
+    (tr: TextTrack, s: PlaybackSubtitle, video: HTMLVideoElement): boolean => {
+      // 1. Direct object identity via HTMLTrackElement.track
+      const trackEl = video.querySelector<HTMLTrackElement>(`track[id="${s.id}"]`);
+      if (trackEl && trackEl.track === tr) return true;
+
+      // 2. Exact or lowercase track ID match
+      if (tr.id && (tr.id === s.id || tr.id.toLowerCase() === s.id.toLowerCase())) {
+        return true;
+      }
+
+      // 3. Label matching (normalized)
+      if (tr.label && s.label && tr.label.trim().toLowerCase() === s.label.trim().toLowerCase()) {
+        return true;
+      }
+
+      // 4. Language code matching (normalized)
+      if (tr.language && s.lang) {
+        const trLang = tr.language.trim().toLowerCase();
+        const sLang = s.lang.trim().toLowerCase();
+        if (trLang === sLang || trLang.startsWith(sLang) || sLang.startsWith(trLang)) {
+          return true;
+        }
+      }
+
+      return false;
+    },
+    []
+  );
+
+  // Update diagnostic snapshot for developers and automated tests
+  const updateDiagnostics = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const textTracks = video.textTracks;
+    const trackList: SubtitleTrackDiagnostic[] = [];
+
+    if (textTracks && textTracks.length > 0) {
+      for (let i = 0; i < textTracks.length; i++) {
+        const tr = textTracks[i];
+        const match = subtitleTracksRef.current.find((s) => isTrackMatchingSubtitle(tr, s, video));
+        const trackEl = match ? video.querySelector<HTMLTrackElement>(`track[id="${match.id}"]`) : null;
+        const readyState = trackEl ? trackEl.readyState : 0;
+        const readyStateLabel =
+          readyState === 0
+            ? '0: NONE'
+            : readyState === 1
+            ? '1: LOADING'
+            : readyState === 2
+            ? '2: LOADED'
+            : '3: ERROR';
+
+        const cuesCount = tr.cues ? tr.cues.length : 0;
+        const activeCues = tr.activeCues ? Array.from(tr.activeCues) : [];
+        const activeCueTexts = activeCues.map((c: any) => c.text || '').filter(Boolean);
+
+        trackList.push({
+          id: tr.id || match?.id || `track-${i}`,
+          label: tr.label || match?.label || `Track ${i + 1}`,
+          language: tr.language || match?.lang || 'unknown',
+          kind: tr.kind || 'subtitles',
+          mode: tr.mode,
+          readyState,
+          readyStateLabel,
+          cuesCount,
+          activeCuesCount: activeCues.length,
+          activeCueTexts
+        });
+      }
+    }
+
+    const isNativeFs = Boolean((video as any).webkitDisplayingFullscreen);
+    const isDocFs = Boolean(
+      document.fullscreenElement || (document as any).webkitFullscreenElement
+    );
+
+    const snapshot: SubtitleDiagnosticData = {
+      selectedSubtitleTrack: selectedSubtitleTrackRef.current,
+      isFullscreen: isDocFs || isNativeFs,
+      isNativeFullscreen: isNativeFs,
+      tracks: trackList,
+      recentEvents: [...recentEventsRef.current]
+    };
+
+    setSubtitleDiagnostics(snapshot);
+
+    if (typeof window !== 'undefined') {
+      (window as any).__kinoRoomSubtitleDiagnostics = snapshot;
+    }
+
+    if (onSubtitleDiagnosticsUpdate) {
+      onSubtitleDiagnosticsUpdate(snapshot);
+    }
+  }, [isTrackMatchingSubtitle, onSubtitleDiagnosticsUpdate]);
+
   // Robust subtitle track application across Hls.js AND Native Safari WebKit
   // Decoupled from stream lifecycle and memoized without state dependencies
   const applySubtitleTrackMode = useCallback((targetSubId: string) => {
     const video = videoRef.current;
     if (!video) return;
+
+    isApplyingSubtitleModeRef.current = true;
+    selectedSubtitleTrackRef.current = targetSubId;
 
     const currentSubtitles = subtitleTracksRef.current;
     const targetSub = currentSubtitles.find((s) => s.id === targetSubId);
@@ -208,15 +352,52 @@ export function KinoRoomPlayer({
             continue;
           }
 
-          const isMatch =
-            tr.id === targetSub.id ||
-            tr.label === targetSub.label ||
-            (Boolean(tr.language) && tr.language === targetSub.lang);
+          const isMatch = isTrackMatchingSubtitle(tr, targetSub, video);
           tr.mode = isMatch ? 'showing' : 'disabled';
         }
       }
     }
-  }, []);
+
+    logSubtitleEvent(`[Apply] Applied mode target="${targetSubId}" (${targetSub?.label || 'OFF'})`);
+    updateDiagnostics();
+
+    // Reset flag after microtask queue so immediate browser events from setting tr.mode are ignored
+    queueMicrotask(() => {
+      isApplyingSubtitleModeRef.current = false;
+    });
+  }, [isTrackMatchingSubtitle, logSubtitleEvent, updateDiagnostics]);
+
+  // Synchronize state from browser's video.textTracks (e.g. user toggles subtitles in Safari native fullscreen)
+  const syncFromMediaTracks = useCallback(() => {
+    // If we are currently applying a mode programmatically, skip to prevent race conditions or loops
+    if (isApplyingSubtitleModeRef.current) return;
+
+    const video = videoRef.current;
+    if (!video || !video.textTracks) return;
+
+    let activeTrackId = 'off';
+    const textTracks = video.textTracks;
+
+    for (let i = 0; i < textTracks.length; i++) {
+      const tr = textTracks[i];
+      if (tr.mode === 'showing') {
+        const match = subtitleTracksRef.current.find((s) =>
+          isTrackMatchingSubtitle(tr, s, video)
+        );
+        if (match) {
+          activeTrackId = match.id;
+          break;
+        }
+      }
+    }
+
+    if (selectedSubtitleTrackRef.current !== activeTrackId) {
+      logSubtitleEvent(`[Sync] Safari changed active track: "${selectedSubtitleTrackRef.current}" -> "${activeTrackId}"`);
+      selectedSubtitleTrackRef.current = activeTrackId;
+      setSelectedSubtitleTrack(activeTrackId);
+    }
+    updateDiagnostics();
+  }, [isTrackMatchingSubtitle, logSubtitleEvent, updateDiagnostics]);
 
   // Dedicated Subtitle Application Effect (Decoupled from Stream Lifecycle)
   useEffect(() => {
@@ -225,45 +406,95 @@ export function KinoRoomPlayer({
 
   // Track synchronization & Safari auto-select suppression
   // Ensures that tracks added asynchronously by the browser respect user selection (default: OFF)
+  // and syncs changes made in Safari native fullscreen back into KinoRoomPlayer state
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !video.textTracks) return;
 
     const textTracks = video.textTracks;
 
-    const enforceMode = () => {
-      applySubtitleTrackMode(selectedSubtitleTrackRef.current);
-    };
-
     const handleTrackAdded = (e: TrackEvent) => {
+      logSubtitleEvent(`[Event] addtrack: label="${e.track?.label}", lang="${e.track?.language}"`);
       if (selectedSubtitleTrackRef.current === 'off') {
-        if (e.track) e.track.mode = 'disabled';
+        if (e.track && e.track.mode !== 'disabled') {
+          e.track.mode = 'disabled';
+        }
       } else {
-        enforceMode();
+        applySubtitleTrackMode(selectedSubtitleTrackRef.current);
       }
+      updateDiagnostics();
     };
 
     const handleTrackChange = () => {
-      if (selectedSubtitleTrackRef.current === 'off') {
-        for (let i = 0; i < textTracks.length; i++) {
-          if (textTracks[i].mode !== 'disabled') {
-            textTracks[i].mode = 'disabled';
-          }
-        }
-      }
+      logSubtitleEvent('[Event] textTracks change event');
+      syncFromMediaTracks();
+    };
+
+    const handleTrackRemoved = () => {
+      logSubtitleEvent('[Event] textTracks removetrack event');
+      syncFromMediaTracks();
     };
 
     textTracks.addEventListener('addtrack', handleTrackAdded);
     textTracks.addEventListener('change', handleTrackChange);
+    textTracks.addEventListener('removetrack', handleTrackRemoved);
 
     // Initial check
-    enforceMode();
+    if (selectedSubtitleTrackRef.current === 'off') {
+      applySubtitleTrackMode('off');
+    } else {
+      applySubtitleTrackMode(selectedSubtitleTrackRef.current);
+    }
 
     return () => {
       textTracks.removeEventListener('addtrack', handleTrackAdded);
       textTracks.removeEventListener('change', handleTrackChange);
+      textTracks.removeEventListener('removetrack', handleTrackRemoved);
     };
-  }, [applySubtitleTrackMode, activeStream.url]);
+  }, [applySubtitleTrackMode, syncFromMediaTracks, updateDiagnostics, logSubtitleEvent, activeStream.url]);
+
+  // Cue change and metadata lifecycle synchronization
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const onLoadedMetadata = () => {
+      logSubtitleEvent('[Event] video loadedmetadata');
+      if (selectedSubtitleTrackRef.current === 'off') {
+        applySubtitleTrackMode('off');
+      } else {
+        applySubtitleTrackMode(selectedSubtitleTrackRef.current);
+      }
+      updateDiagnostics();
+    };
+
+    const onCanPlay = () => {
+      updateDiagnostics();
+    };
+
+    video.addEventListener('loadedmetadata', onLoadedMetadata);
+    video.addEventListener('canplay', onCanPlay);
+
+    // Listen to cuechange on all tracks to update activeCue texts in diagnostics
+    const attachedTracks: TextTrack[] = [];
+    const onCueChange = () => {
+      updateDiagnostics();
+    };
+
+    if (video.textTracks) {
+      for (let i = 0; i < video.textTracks.length; i++) {
+        const tr = video.textTracks[i];
+        tr.addEventListener('cuechange', onCueChange);
+        attachedTracks.push(tr);
+      }
+    }
+
+    return () => {
+      video.removeEventListener('loadedmetadata', onLoadedMetadata);
+      video.removeEventListener('canplay', onCanPlay);
+      attachedTracks.forEach((tr) => tr.removeEventListener('cuechange', onCueChange));
+    };
+  }, [applySubtitleTrackMode, updateDiagnostics, logSubtitleEvent, activeStream.url]);
 
   // Setup stream (Hls.js or native HTML5 for Safari / MP4)
   // DECOUPLED: depends STRICTLY on activeStream.url and activeStream.type!
@@ -545,10 +776,22 @@ export function KinoRoomPlayer({
         document.fullscreenElement || (document as any).webkitFullscreenElement
       );
       setIsFullscreen(isFs);
+      syncFromMediaTracks();
+      updateDiagnostics();
     };
 
-    const onWebkitBegin = () => setIsFullscreen(true);
-    const onWebkitEnd = () => setIsFullscreen(false);
+    const onWebkitBegin = () => {
+      setIsFullscreen(true);
+      logSubtitleEvent('[Fullscreen] webkitbeginfullscreen');
+      updateDiagnostics();
+    };
+
+    const onWebkitEnd = () => {
+      setIsFullscreen(false);
+      logSubtitleEvent('[Fullscreen] webkitendfullscreen');
+      syncFromMediaTracks();
+      updateDiagnostics();
+    };
 
     document.addEventListener('fullscreenchange', onStandardFsChange);
     document.addEventListener('webkitfullscreenchange', onStandardFsChange);
@@ -566,7 +809,7 @@ export function KinoRoomPlayer({
         video.removeEventListener('webkitendfullscreen', onWebkitEnd);
       }
     };
-  }, []);
+  }, [syncFromMediaTracks, updateDiagnostics, logSubtitleEvent]);
 
   // Keyboard navigation
   useEffect(() => {
@@ -683,6 +926,7 @@ export function KinoRoomPlayer({
 
   // Switching Subtitles
   const handleSelectSubtitleTrack = (subId: string) => {
+    selectedSubtitleTrackRef.current = subId;
     setSelectedSubtitleTrack(subId);
     applySubtitleTrackMode(subId);
     setShowSubtitleMenu(false);
@@ -752,6 +996,14 @@ export function KinoRoomPlayer({
                 label={sub.label}
                 srcLang={sub.lang}
                 src={sub.url}
+                onLoad={() => {
+                  logSubtitleEvent(`[Track Load] "${sub.label}" (${sub.id}) readyState: 2 (LOADED)`);
+                  updateDiagnostics();
+                }}
+                onError={() => {
+                  logSubtitleEvent(`[Track Error] "${sub.label}" (${sub.id}) failed to load`);
+                  updateDiagnostics();
+                }}
               />
             ))}
         </video>
@@ -1357,6 +1609,80 @@ export function KinoRoomPlayer({
           </div>
         </div>
       </div>
+
+      {/* Dev Diagnostic Panel: strictly gated to showSubtitleDiagnostics prop */}
+      {showSubtitleDiagnostics && (
+        <div
+          data-testid="subtitle-diagnostic-panel"
+          className="p-3 bg-[#0d0e15] border border-purple-500/30 rounded-xl text-xs font-mono space-y-2 text-gray-300"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-2">
+            <span className="font-bold text-purple-400">Диагностика субтитров Safari & WebVTT (Dev)</span>
+            <span className="text-[10px] text-gray-400">
+              KinoRoom: <strong className="text-white">{subtitleDiagnostics.selectedSubtitleTrack}</strong> |{' '}
+              Fullscreen: <strong className={subtitleDiagnostics.isFullscreen ? 'text-emerald-400' : 'text-gray-400'}>
+                {subtitleDiagnostics.isNativeFullscreen ? 'iOS Native' : subtitleDiagnostics.isFullscreen ? 'Doc FS' : 'Inline'}
+              </strong>
+            </span>
+          </div>
+
+          {/* Tracks table */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-[11px]">
+              <thead>
+                <tr className="text-gray-500 border-b border-white/5">
+                  <th className="py-1 pr-2">ID</th>
+                  <th className="py-1 pr-2">Label</th>
+                  <th className="py-1 pr-2">Lang</th>
+                  <th className="py-1 pr-2">Mode</th>
+                  <th className="py-1 pr-2">ReadyState</th>
+                  <th className="py-1 pr-2">Cues</th>
+                  <th className="py-1">Active Cue</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {subtitleDiagnostics.tracks.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="py-2 text-gray-500 italic">
+                      video.textTracks пуст или не инициализирован
+                    </td>
+                  </tr>
+                ) : (
+                  subtitleDiagnostics.tracks.map((t) => (
+                    <tr key={t.id} className={t.mode === 'showing' ? 'text-emerald-300 font-semibold' : 'text-gray-400'}>
+                      <td className="py-1 pr-2">{t.id}</td>
+                      <td className="py-1 pr-2">{t.label}</td>
+                      <td className="py-1 pr-2">{t.language}</td>
+                      <td className="py-1 pr-2">
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] ${t.mode === 'showing' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-white/5 text-gray-400'}`}>
+                          {t.mode}
+                        </span>
+                      </td>
+                      <td className="py-1 pr-2">{t.readyStateLabel}</td>
+                      <td className="py-1 pr-2">{t.cuesCount}</td>
+                      <td className="py-1 truncate max-w-[150px] text-emerald-400">
+                        {t.activeCueTexts.join(' / ') || '—'}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Recent Events Log */}
+          {subtitleDiagnostics.recentEvents.length > 0 && (
+            <div className="pt-1 border-t border-white/5">
+              <div className="text-[10px] text-gray-400 mb-1">События синхронизации (последние):</div>
+              <div className="max-h-20 overflow-y-auto space-y-0.5 text-[10px] text-gray-400">
+                {subtitleDiagnostics.recentEvents.map((ev, idx) => (
+                  <div key={idx} className="leading-tight">{ev}</div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

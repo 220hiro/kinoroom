@@ -226,6 +226,102 @@ test('Subtitle Track switching simulation: ON (ru) -> OFF -> ON (en) -> other la
   assert.ok(mockTracks.every((t) => t.mode === 'disabled'), 'Finally all tracks disabled');
 });
 
+test('Safari Native Fullscreen Bidirectional Subtitle Synchronization simulation', () => {
+  const item = DEMO_MEDIA_LIBRARY['tears-of-steel'];
+  const stream = item.streamMap['tos-orig-en'];
+  const subs = stream.subtitles;
+
+  // Mock textTracks collection as seen in Safari
+  const mockSafariTracks = subs.map((s) => ({
+    id: s.id,
+    label: s.label,
+    language: s.lang,
+    mode: 'disabled' as 'disabled' | 'showing' | 'hidden'
+  }));
+
+  let currentSelectedSubtitleTrack = 'off';
+  let isApplyingSubtitleMode = false;
+  let syncCallCount = 0;
+
+  // Matching helper matching KinoRoomPlayer isTrackMatchingSubtitle logic
+  const isMatch = (tr: typeof mockSafariTracks[0], s: typeof subs[0]) => {
+    if (tr.id && (tr.id === s.id || tr.id.toLowerCase() === s.id.toLowerCase())) return true;
+    if (tr.label && s.label && tr.label.trim().toLowerCase() === s.label.trim().toLowerCase()) return true;
+    if (tr.language && s.lang) {
+      const trL = tr.language.trim().toLowerCase();
+      const sL = s.lang.trim().toLowerCase();
+      if (trL === sL || trL.startsWith(sL) || sL.startsWith(trL)) return true;
+    }
+    return false;
+  };
+
+  const simulateSyncFromMediaTracks = () => {
+    if (isApplyingSubtitleMode) return;
+    syncCallCount++;
+
+    let activeId = 'off';
+    for (const tr of mockSafariTracks) {
+      if (tr.mode === 'showing') {
+        const found = subs.find((s) => isMatch(tr, s));
+        if (found) {
+          activeId = found.id;
+          break;
+        }
+      }
+    }
+
+    if (currentSelectedSubtitleTrack !== activeId) {
+      currentSelectedSubtitleTrack = activeId;
+    }
+  };
+
+  const simulateApplySubtitle = (targetId: string) => {
+    isApplyingSubtitleMode = true;
+    currentSelectedSubtitleTrack = targetId;
+
+    const targetSub = subs.find((s) => s.id === targetId);
+    for (const tr of mockSafariTracks) {
+      if (targetId === 'off' || !targetSub) {
+        tr.mode = 'disabled';
+      } else {
+        tr.mode = isMatch(tr, targetSub) ? 'showing' : 'disabled';
+      }
+    }
+    // Browser fires change event:
+    simulateSyncFromMediaTracks(); // Ignored because isApplyingSubtitleMode is true!
+    isApplyingSubtitleMode = false;
+  };
+
+  // 1. Initial State: OFF
+  assert.equal(currentSelectedSubtitleTrack, 'off');
+  assert.ok(mockSafariTracks.every((t) => t.mode === 'disabled'));
+
+  // 2. User selects Russian in KinoRoom UI
+  simulateApplySubtitle('sub-ru');
+  assert.equal(currentSelectedSubtitleTrack, 'sub-ru');
+  assert.equal(mockSafariTracks.find((t) => t.id === 'sub-ru')?.mode, 'showing');
+
+  // 3. User enters native fullscreen on iPhone and switches to English via Safari system menu
+  mockSafariTracks.find((t) => t.id === 'sub-ru')!.mode = 'disabled';
+  mockSafariTracks.find((t) => t.id === 'sub-en')!.mode = 'showing';
+
+  // Safari dispatches change event or webkitendfullscreen exit
+  simulateSyncFromMediaTracks();
+
+  // KinoRoom state must now be synchronized to English!
+  assert.equal(currentSelectedSubtitleTrack, 'sub-en', 'KinoRoom must synchronize to English when changed in Safari');
+
+  // 4. User exits native fullscreen and switches to OFF via Safari system menu
+  mockSafariTracks.forEach((t) => { t.mode = 'disabled'; });
+  simulateSyncFromMediaTracks();
+
+  // KinoRoom state must now be synchronized to OFF!
+  assert.equal(currentSelectedSubtitleTrack, 'off', 'KinoRoom must synchronize to OFF when disabled in Safari');
+
+  // Verify no infinite loop occurred
+  assert.ok(syncCallCount <= 5, 'Must not create infinite sync loops');
+});
+
 test('Real Tears of Steel Subtitles: Technical validation and dialogue synchronization', async () => {
   const fs = await import('fs');
   const path = await import('path');

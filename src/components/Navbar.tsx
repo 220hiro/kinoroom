@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Search, Film, Tv, Magnet, Bookmark, User, ChevronDown } from 'lucide-react';
+import { Search, Film, Tv, Magnet, Bookmark, User, ChevronDown, Play } from 'lucide-react';
 import { getProfiles, getActiveProfileId, setActiveProfileId, UserProfile } from '@/lib/storage';
 
 export function Navbar() {
@@ -80,6 +80,12 @@ export function Navbar() {
             </Link>
             <Link href="/bookmarks" className="flex items-center gap-1.5 text-gray-300 hover:text-white transition-colors">
               <Bookmark className="w-4 h-4" /> Закладки
+            </Link>
+            <Link
+              href="/player-test"
+              className="flex items-center gap-1.5 text-emerald-400 hover:text-emerald-300 font-semibold transition-colors"
+            >
+              <Play className="w-3.5 h-3.5 fill-current" /> Тест плеера
             </Link>
           </nav>
         </div>

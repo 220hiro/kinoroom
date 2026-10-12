@@ -26,6 +26,8 @@ import {
 import { Media, Episode, TorrentSearchResult } from '@/lib/types';
 import { OnlinePlayer } from '@/components/player/OnlinePlayer';
 import { TorrentPlayer } from '@/components/player/TorrentPlayer';
+import { KinoRoomPlayer } from '@/components/player/KinoRoomPlayer';
+import { PlaybackResponse } from '@/lib/playback/types';
 import {
   getActiveProfileId,
   isBookmarked,
@@ -51,8 +53,11 @@ export default function TitlePage({ params }: TitlePageProps) {
   const [selectedSeason, setSelectedSeason] = useState(1);
   const [selectedEpisode, setSelectedEpisode] = useState(1);
 
-  // Streaming player state (torrent player default without ads)
-  const [activeTab, setActiveTab] = useState<'online' | 'torrent'>('torrent');
+  // Streaming player state: 'native' is default KinoRoom AnimeOn-style player
+  const [activeTab, setActiveTab] = useState<'native' | 'torrent' | 'online'>('native');
+  const [playbackData, setPlaybackData] = useState<PlaybackResponse | null>(null);
+  const [isLoadingPlayback, setIsLoadingPlayback] = useState<boolean>(true);
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
   const [bookmarked, setBookmarked] = useState(false);
   const [isPlayerOpen, setIsPlayerOpen] = useState(false);
 
@@ -101,6 +106,44 @@ export default function TitlePage({ params }: TitlePageProps) {
     }
     loadData();
   }, [mediaType, mediaId, selectedSeason, selectedEpisode]);
+
+  // Playback API Stream Resolution
+  const resolvePlaybackStream = async (targetId?: string | number, translationId?: string) => {
+    if (!media && !targetId) return;
+    setIsLoadingPlayback(true);
+    setPlaybackError(null);
+    try {
+      const res = await fetch('/api/playback/resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mediaId: targetId || media?.id,
+          mediaType,
+          season: mediaType === 'tv' ? selectedSeason : undefined,
+          episode: mediaType === 'tv' ? selectedEpisode : undefined,
+          translationId
+        })
+      });
+
+      const data: PlaybackResponse = await res.json();
+      if (res.ok && data.success) {
+        setPlaybackData(data);
+      } else {
+        setPlaybackData(null);
+        setPlaybackError(data.error || 'Для данного тайтла пока нет подтвержденного HLS-потока в открытом доступе.');
+      }
+    } catch (e: any) {
+      setPlaybackData(null);
+      setPlaybackError(e?.message || 'Ошибка подключения к Playback API');
+    } finally {
+      setIsLoadingPlayback(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!media) return;
+    resolvePlaybackStream();
+  }, [media?.id, selectedSeason, selectedEpisode]);
 
   // Fetch torrents helper
   const fetchTorrents = async (overrideQuery?: string) => {
@@ -405,37 +448,109 @@ export default function TitlePage({ params }: TitlePageProps) {
         <div id="media-player-container" className="mt-12 space-y-6">
           {/* Stream Type Tabs */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/10 pb-4">
-            <div className="grid grid-cols-2 gap-2 w-full sm:w-auto sm:flex sm:items-center">
+            <div className="grid grid-cols-3 gap-2 w-full sm:w-auto sm:flex sm:items-center">
+              <button
+                onClick={() => setActiveTab('native')}
+                className={`flex items-center justify-center gap-2 px-3 sm:px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all cursor-pointer text-center ${
+                  activeTab === 'native'
+                    ? 'bg-red-600 text-white shadow-lg shadow-red-600/30'
+                    : 'bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white border border-white/5'
+                }`}
+              >
+                <Play className="w-3.5 h-3.5 shrink-0 fill-current" />
+                <span className="truncate">Плеер КиноРум</span>
+              </button>
+
               <button
                 onClick={() => setActiveTab('torrent')}
-                className={`flex items-center justify-center gap-2 px-3 sm:px-5 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all cursor-pointer text-center ${
+                className={`flex items-center justify-center gap-2 px-3 sm:px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all cursor-pointer text-center ${
                   activeTab === 'torrent'
                     ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/30'
                     : 'bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white border border-white/5'
                 }`}
               >
-                <Magnet className="w-4 h-4 shrink-0 text-current" />
-                <span className="truncate">Плеер КиноРум (Без рекламы)</span>
+                <Magnet className="w-3.5 h-3.5 shrink-0 text-current" />
+                <span className="truncate">Торренты</span>
               </button>
 
               <button
                 onClick={() => setActiveTab('online')}
-                className={`flex items-center justify-center gap-2 px-3 sm:px-5 py-2.5 rounded-xl font-medium text-xs sm:text-sm transition-all cursor-pointer text-center ${
+                className={`flex items-center justify-center gap-2 px-3 sm:px-4 py-2.5 rounded-xl font-medium text-xs sm:text-sm transition-all cursor-pointer text-center ${
                   activeTab === 'online'
                     ? 'bg-white/20 text-white shadow-lg border border-white/20'
                     : 'bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white border border-white/5'
                 }`}
               >
-                <Radio className="w-4 h-4 shrink-0" />
-                <span className="truncate">Резервные балансеры (с рекламой)</span>
+                <Radio className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">Балансеры</span>
               </button>
             </div>
 
             <div className="text-[11px] sm:text-xs text-gray-400 text-center sm:text-right">
-              {activeTab === 'torrent' && 'Прямой чистый стриминг 1080p/4K без сторонней рекламы'}
-              {activeTab === 'online' && 'Внешние веб-источники (могут содержать рекламу провайдеров)'}
+              {activeTab === 'native' && 'Собственный нативный HLS-плеер КиноРум (без рекламы)'}
+              {activeTab === 'torrent' && 'Прямой торрент-стриминг (требуется TorrServer)'}
+              {activeTab === 'online' && 'Внешние веб-балансеры (могут содержать рекламу провайдеров)'}
             </div>
           </div>
+
+          {/* 1. Native Playback Tab */}
+          {activeTab === 'native' && (
+            <div className="space-y-4">
+              {isLoadingPlayback ? (
+                <div className="w-full aspect-video min-h-[260px] bg-black/60 rounded-2xl border border-white/10 flex flex-col items-center justify-center gap-3">
+                  <div className="w-8 h-8 rounded-full border-2 border-red-500 border-t-transparent animate-spin" />
+                  <span className="text-xs text-gray-300">Поиск потока через Playback API...</span>
+                </div>
+              ) : playbackData && playbackData.success ? (
+                <KinoRoomPlayer
+                  key={`${playbackData.stream.url}-${playbackData.currentTranslation?.id}`}
+                  playbackData={playbackData}
+                  initialTime={savedProgressTime ?? undefined}
+                  onTimeUpdate={handleTimeUpdate}
+                  onTranslationChange={async (translationId) => {
+                    await resolvePlaybackStream(undefined, translationId);
+                  }}
+                  onRefreshStream={() => resolvePlaybackStream()}
+                />
+              ) : (
+                <div className="w-full aspect-video min-h-[280px] bg-[#12141f] rounded-2xl border border-white/10 flex flex-col items-center justify-center p-6 text-center space-y-4">
+                  <div className="w-12 h-12 rounded-2xl bg-red-600/10 border border-red-500/20 flex items-center justify-center text-red-400">
+                    <Play className="w-6 h-6 fill-current ml-0.5" />
+                  </div>
+                  <div className="max-w-md space-y-1">
+                    <h4 className="text-white font-bold text-sm sm:text-base">Прямой открытый HLS-поток не обнаружен</h4>
+                    <p className="text-gray-400 text-xs">
+                      {playbackError || 'Для данного фильма в открытом доступе пока нет подтвержденного HLS-потока без рекламы.'}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                    <button
+                      onClick={() => resolvePlaybackStream('tears-of-steel')}
+                      className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-lg shadow-red-600/20"
+                    >
+                      <Play className="w-3.5 h-3.5 fill-current" />
+                      <span>Запустить тестовый HLS-стрим в плеере</span>
+                    </button>
+                    {torrents.length > 0 && (
+                      <button
+                        onClick={() => setActiveTab('torrent')}
+                        className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
+                      >
+                        <Magnet className="w-3.5 h-3.5" />
+                        <span>Выбрать торрент ({torrents.length})</span>
+                      </button>
+                    )}
+                    <a
+                      href="/player-test"
+                      className="px-3 py-2 bg-white/10 hover:bg-white/15 text-gray-300 hover:text-white rounded-xl text-xs font-semibold transition-all"
+                    >
+                      Тест-лаборатория /player-test ➔
+                    </a>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Player Tab Content */}
           {activeTab === 'online' && (

@@ -25,7 +25,7 @@ export const DEMO_MEDIA_LIBRARY: Record<string, DemoMediaItem> = {
     description: 'Открытый научно-фантастический фильм Blender Foundation (2012) в качестве 1080p с адаптивным HLS-потоком.',
     year: 2012,
     duration: 734,
-    poster: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=800&auto=format&fit=crop',
+    poster: '/posters/tears-of-steel.svg',
     backdrop: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1600&auto=format&fit=crop',
     translations: [
       {
@@ -65,7 +65,7 @@ export const DEMO_MEDIA_LIBRARY: Record<string, DemoMediaItem> = {
             label: 'English',
             url: '/subtitles/subtitles-en.vtt',
             format: 'vtt',
-            isDefault: true
+            isDefault: false
           }
         ]
       }
@@ -77,7 +77,7 @@ export const DEMO_MEDIA_LIBRARY: Record<string, DemoMediaItem> = {
     description: 'Классический открытый анимационный фильм Blender Foundation с адаптивным многобитрейтным HLS качеством 1080p/720p/480p.',
     year: 2008,
     duration: 596,
-    poster: 'https://images.unsplash.com/photo-1574375927938-d5a98e8ffe85?w=800&auto=format&fit=crop',
+    poster: '/posters/big-buck-bunny.svg',
     backdrop: 'https://images.unsplash.com/photo-1517604931442-7e0c8ed2963c?w=1600&auto=format&fit=crop',
     translations: [
       {
@@ -112,7 +112,7 @@ export const DEMO_MEDIA_LIBRARY: Record<string, DemoMediaItem> = {
     description: 'Официальный эталонный HLS-поток Apple с фрагментированным MP4 (fMP4), 1080p 60fps и многоязычными аудиодорожками.',
     year: 2020,
     duration: 600,
-    poster: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=800&auto=format&fit=crop',
+    poster: '/posters/apple-bipbop.svg',
     backdrop: 'https://images.unsplash.com/photo-1478760329108-5c3ed9d495a0?w=1600&auto=format&fit=crop',
     translations: [
       {

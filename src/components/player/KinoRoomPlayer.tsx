@@ -20,7 +20,8 @@ import {
   Sparkles,
   AlertCircle,
   RefreshCw,
-  X
+  X,
+  Settings
 } from 'lucide-react';
 import {
   PlaybackResponse,
@@ -87,21 +88,27 @@ export function KinoRoomPlayer({
   const [qualityLevels, setQualityLevels] = useState<PlaybackQuality[]>(activeStream.qualities || []);
   const [selectedQuality, setSelectedQuality] = useState<number>(-1); // -1 = Auto
 
-  // Dropdown menu toggles
+  // Dropdown menu toggles (Desktop)
   const [showSpeedMenu, setShowSpeedMenu] = useState<boolean>(false);
   const [showTranslationMenu, setShowTranslationMenu] = useState<boolean>(false);
   const [showAudioMenu, setShowAudioMenu] = useState<boolean>(false);
   const [showSubtitleMenu, setShowSubtitleMenu] = useState<boolean>(false);
   const [showQualityMenu, setShowQualityMenu] = useState<boolean>(false);
 
+  // Mobile settings drawer toggle
+  const [showMobileSettings, setShowMobileSettings] = useState<boolean>(false);
+
   // Resume prompt state
   const [resumePromptTime, setResumePromptTime] = useState<number | null>(null);
 
-  // Keep state synced if prop changes
+  // Synchronize state when playbackData prop changes
   useEffect(() => {
     setActiveStream(playbackData.stream);
     setCurrentTranslation(playbackData.currentTranslation);
     setAvailableTranslations(playbackData.availableTranslations || []);
+    setSubtitleTracks(playbackData.stream.subtitles || []);
+    setAudioTracks(playbackData.stream.audioTracks || []);
+    setQualityLevels(playbackData.stream.qualities || []);
     if (playbackData.error) {
       setErrorMessage(playbackData.error);
     } else {
@@ -133,7 +140,6 @@ export function KinoRoomPlayer({
     setResumePromptTime(null);
   };
 
-  // Format seconds to mm:ss or hh:mm:ss
   const formatTime = (seconds: number) => {
     if (isNaN(seconds) || seconds <= 0) return '00:00';
     const h = Math.floor(seconds / 3600);
@@ -144,6 +150,51 @@ export function KinoRoomPlayer({
     }
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
+
+  // Robust subtitle track application across Hls.js AND Native Safari WebKit
+  const applySubtitleTrackMode = useCallback(
+    (targetSubId: string) => {
+      const video = videoRef.current;
+      if (!video) return;
+
+      // 1. HLS.js subtitles (MSE mode)
+      if (hlsRef.current) {
+        if (targetSubId === 'off') {
+          hlsRef.current.subtitleTrack = -1;
+        } else {
+          const numericId = parseInt(targetSubId, 10);
+          if (!isNaN(numericId) && numericId >= 0) {
+            hlsRef.current.subtitleTrack = numericId;
+          } else {
+            const hlsSubs = hlsRef.current.subtitleTracks || [];
+            const idx = hlsSubs.findIndex(
+              (st) => st.name === targetSubId || st.lang === targetSubId
+            );
+            hlsRef.current.subtitleTrack = idx >= 0 ? idx : -1;
+          }
+        }
+      }
+
+      // 2. HTML5 TextTrack mode (Native Safari HLS + HTML <track> elements)
+      if (video.textTracks && video.textTracks.length > 0) {
+        const targetSub = subtitleTracks.find((s) => s.id === targetSubId);
+
+        for (let i = 0; i < video.textTracks.length; i++) {
+          const tr = video.textTracks[i];
+          if (targetSubId === 'off' || !targetSub) {
+            tr.mode = 'disabled';
+          } else {
+            const isMatch =
+              tr.id === targetSub.id ||
+              tr.label === targetSub.label ||
+              (Boolean(tr.language) && tr.language === targetSub.lang);
+            tr.mode = isMatch ? 'showing' : 'disabled';
+          }
+        }
+      }
+    },
+    [subtitleTracks]
+  );
 
   // Setup stream (Hls.js or native HTML5 for Safari / MP4)
   useEffect(() => {
@@ -175,7 +226,6 @@ export function KinoRoomPlayer({
       hls.on(Hls.Events.MANIFEST_PARSED, (_event, _data) => {
         setIsBuffering(false);
 
-        // Quality levels from HLS manifest
         if (hls.levels && hls.levels.length > 0) {
           const lvls: PlaybackQuality[] = hls.levels.map((lvl, idx) => ({
             id: String(idx),
@@ -186,11 +236,12 @@ export function KinoRoomPlayer({
           setQualityLevels(lvls);
         }
 
-        // Pending seek (e.g. from translation change or resume)
         if (pendingSeekTimeRef.current !== null) {
           video.currentTime = pendingSeekTimeRef.current;
           pendingSeekTimeRef.current = null;
         }
+
+        applySubtitleTrackMode(selectedSubtitleTrack);
 
         if (autoPlay) {
           video.play().catch(() => {});
@@ -218,7 +269,7 @@ export function KinoRoomPlayer({
             label: sub.name || `Субтитры ${idx + 1}`,
             url: '',
             format: 'vtt',
-            isDefault: sub.default
+            isDefault: false
           }));
           setSubtitleTracks((prev) => {
             const combined = [...prev];
@@ -227,6 +278,7 @@ export function KinoRoomPlayer({
             });
             return combined;
           });
+          applySubtitleTrackMode(selectedSubtitleTrack);
         }
       });
 
@@ -255,6 +307,12 @@ export function KinoRoomPlayer({
       video.src = activeStream.url;
       video.load();
 
+      const onCanPlay = () => {
+        setIsBuffering(false);
+        applySubtitleTrackMode(selectedSubtitleTrack);
+      };
+      video.addEventListener('canplay', onCanPlay, { once: true });
+
       if (pendingSeekTimeRef.current !== null) {
         video.currentTime = pendingSeekTimeRef.current;
         pendingSeekTimeRef.current = null;
@@ -271,7 +329,7 @@ export function KinoRoomPlayer({
         hlsRef.current = null;
       }
     };
-  }, [activeStream.url, activeStream.type, autoPlay]);
+  }, [activeStream.url, activeStream.type, autoPlay, applySubtitleTrackMode, selectedSubtitleTrack]);
 
   // Video playback listeners
   const handleTimeUpdate = () => {
@@ -281,7 +339,6 @@ export function KinoRoomPlayer({
     setCurrentTime(cur);
     setDuration(dur);
 
-    // Buffer range
     if (videoRef.current.buffered.length > 0) {
       for (let i = 0; i < videoRef.current.buffered.length; i++) {
         if (
@@ -344,14 +401,34 @@ export function KinoRoomPlayer({
       videoRef.current.playbackRate = rate;
     }
     setShowSpeedMenu(false);
+    setShowMobileSettings(false);
   };
 
-  // Fullscreen support (including iOS Safari webkitEnterFullscreen)
+  // Fullscreen support: Robust selection between Fullscreen API and iPhone Safari webkitEnterFullscreen
   const toggleFullscreen = () => {
     const container = containerRef.current;
     const video = videoRef.current;
-    if (!container) return;
+    if (!container || !video) return;
 
+    const isIPhone = typeof navigator !== 'undefined' && /iPhone|iPod/.test(navigator.userAgent);
+
+    // On iPhone, Apple ONLY supports webkitEnterFullscreen on the HTMLVideoElement
+    if (isIPhone && typeof (video as any).webkitEnterFullscreen === 'function') {
+      if ((video as any).webkitDisplayingFullscreen) {
+        if (typeof (video as any).webkitExitFullscreen === 'function') {
+          (video as any).webkitExitFullscreen();
+        }
+      } else {
+        try {
+          (video as any).webkitEnterFullscreen();
+        } catch (err) {
+          console.warn('[KinoRoomPlayer] webkitEnterFullscreen error:', err);
+        }
+      }
+      return;
+    }
+
+    // Standard Fullscreen API for Desktop, Android, iPad
     const isFs = Boolean(
       document.fullscreenElement || (document as any).webkitFullscreenElement
     );
@@ -359,14 +436,12 @@ export function KinoRoomPlayer({
     if (!isFs) {
       if (container.requestFullscreen) {
         container.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => {
-          if (video && (video as any).webkitEnterFullscreen) {
+          if (typeof (video as any).webkitEnterFullscreen === 'function') {
             (video as any).webkitEnterFullscreen();
-            setIsFullscreen(true);
           }
         });
-      } else if (video && (video as any).webkitEnterFullscreen) {
+      } else if (typeof (video as any).webkitEnterFullscreen === 'function') {
         (video as any).webkitEnterFullscreen();
-        setIsFullscreen(true);
       }
     } else {
       if (document.exitFullscreen) {
@@ -378,17 +453,35 @@ export function KinoRoomPlayer({
     }
   };
 
+  // Fullscreen event listeners including WebKit native iPhone events
   useEffect(() => {
-    const onFsChange = () => {
-      setIsFullscreen(
-        Boolean(document.fullscreenElement || (document as any).webkitFullscreenElement)
+    const video = videoRef.current;
+
+    const onStandardFsChange = () => {
+      const isFs = Boolean(
+        document.fullscreenElement || (document as any).webkitFullscreenElement
       );
+      setIsFullscreen(isFs);
     };
-    document.addEventListener('fullscreenchange', onFsChange);
-    document.addEventListener('webkitfullscreenchange', onFsChange);
+
+    const onWebkitBegin = () => setIsFullscreen(true);
+    const onWebkitEnd = () => setIsFullscreen(false);
+
+    document.addEventListener('fullscreenchange', onStandardFsChange);
+    document.addEventListener('webkitfullscreenchange', onStandardFsChange);
+
+    if (video) {
+      video.addEventListener('webkitbeginfullscreen', onWebkitBegin);
+      video.addEventListener('webkitendfullscreen', onWebkitEnd);
+    }
+
     return () => {
-      document.removeEventListener('fullscreenchange', onFsChange);
-      document.removeEventListener('webkitfullscreenchange', onFsChange);
+      document.removeEventListener('fullscreenchange', onStandardFsChange);
+      document.removeEventListener('webkitfullscreenchange', onStandardFsChange);
+      if (video) {
+        video.removeEventListener('webkitbeginfullscreen', onWebkitBegin);
+        video.removeEventListener('webkitendfullscreen', onWebkitEnd);
+      }
     };
   }, []);
 
@@ -458,14 +551,16 @@ export function KinoRoomPlayer({
         setShowAudioMenu(false);
         setShowSubtitleMenu(false);
         setShowQualityMenu(false);
+        setShowMobileSettings(false);
       }
-    }, 3500);
+    }, 4000);
   };
 
-  // Switching Translation / Voice Acting (preserves current playback position!)
+  // Switching Translation
   const handleSelectTranslation = async (translation: PlaybackTranslation) => {
     if (translation.id === currentTranslation?.id) {
       setShowTranslationMenu(false);
+      setShowMobileSettings(false);
       return;
     }
 
@@ -473,6 +568,7 @@ export function KinoRoomPlayer({
     pendingSeekTimeRef.current = savedPosition;
     setCurrentTranslation(translation);
     setShowTranslationMenu(false);
+    setShowMobileSettings(false);
     setIsBuffering(true);
 
     if (onTranslationChange) {
@@ -487,7 +583,7 @@ export function KinoRoomPlayer({
     }
   };
 
-  // Switching In-Manifest Audio Track (via Hls.js or native Safari tracks)
+  // Switching In-Manifest Audio Track
   const handleSelectAudioTrack = (trackId: string | number) => {
     setSelectedAudioTrack(trackId);
     if (hlsRef.current && typeof trackId === 'number') {
@@ -499,31 +595,15 @@ export function KinoRoomPlayer({
       }
     }
     setShowAudioMenu(false);
+    setShowMobileSettings(false);
   };
 
   // Switching Subtitles
   const handleSelectSubtitleTrack = (subId: string) => {
     setSelectedSubtitleTrack(subId);
-
-    // HLS.js native subtitles
-    if (hlsRef.current) {
-      const numericId = parseInt(subId, 10);
-      hlsRef.current.subtitleTrack = subId === 'off' || isNaN(numericId) ? -1 : numericId;
-    }
-
-    // HTML5 text tracks (<track>)
-    if (videoRef.current && videoRef.current.textTracks) {
-      for (let i = 0; i < videoRef.current.textTracks.length; i++) {
-        const tr = videoRef.current.textTracks[i];
-        if (subId === 'off') {
-          tr.mode = 'disabled';
-        } else {
-          tr.mode = tr.id === subId || tr.label === subId ? 'showing' : 'disabled';
-        }
-      }
-    }
-
+    applySubtitleTrackMode(subId);
     setShowSubtitleMenu(false);
+    setShowMobileSettings(false);
   };
 
   // Switching Quality
@@ -533,14 +613,18 @@ export function KinoRoomPlayer({
       hlsRef.current.currentLevel = qualityId; // -1 = Auto
     }
     setShowQualityMenu(false);
+    setShowMobileSettings(false);
   };
 
+  const activeSub = subtitleTracks.find((s) => s.id === selectedSubtitleTrack);
+
   return (
-    <div className="space-y-3 select-none">
+    <div className="space-y-3 select-none w-full">
       <div
         ref={containerRef}
         onMouseMove={handleMouseMove}
-        className="relative w-full aspect-video min-h-[260px] sm:min-h-[420px] bg-black rounded-2xl overflow-hidden shadow-2xl border border-white/10 group flex flex-col justify-between"
+        onTouchStart={() => setShowControls(true)}
+        className="relative w-full aspect-video bg-black rounded-xl sm:rounded-2xl overflow-hidden shadow-2xl border border-white/10 group flex flex-col justify-between"
       >
         {/* HTML5 Video Element */}
         <video
@@ -574,7 +658,7 @@ export function KinoRoomPlayer({
           onClick={togglePlay}
           className="w-full h-full object-contain cursor-pointer"
         >
-          {/* External VTT Subtitles */}
+          {/* External VTT Subtitles (default is strictly false to prevent auto-enabling in Safari) */}
           {subtitleTracks
             .filter((sub) => sub.url && sub.url.length > 0)
             .map((sub) => (
@@ -585,19 +669,19 @@ export function KinoRoomPlayer({
                 label={sub.label}
                 srcLang={sub.lang}
                 src={sub.url}
-                default={sub.isDefault}
+                default={false}
               />
             ))}
         </video>
 
         {/* Floating Resume Notification Banner */}
         {resumePromptTime && (
-          <div className="absolute top-16 left-4 sm:left-6 z-30 max-w-sm bg-[#12141f]/95 backdrop-blur-md border border-amber-500/50 rounded-xl p-3 shadow-2xl animate-fade-in flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5">
+          <div className="absolute top-12 sm:top-16 left-3 sm:left-6 z-30 max-w-[90%] sm:max-w-sm bg-[#12141f]/95 backdrop-blur-md border border-amber-500/50 rounded-xl p-2.5 sm:p-3 shadow-2xl animate-fade-in flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
               <div className="text-xs">
-                <span className="text-white font-bold">Продолжить просмотр?</span>
-                <p className="text-gray-300">С таймкода {formatTime(resumePromptTime)}</p>
+                <span className="text-white font-bold block sm:inline">Продолжить просмотр?</span>{' '}
+                <span className="text-gray-300">С {formatTime(resumePromptTime)}</span>
               </div>
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
@@ -619,30 +703,25 @@ export function KinoRoomPlayer({
 
         {/* Top Info Header Bar */}
         <div
-          className={`absolute top-0 inset-x-0 p-3 sm:p-4 bg-gradient-to-b from-black/80 via-black/40 to-transparent transition-opacity duration-300 z-20 flex items-center justify-between pointer-events-auto ${
+          className={`absolute top-0 inset-x-0 p-2.5 sm:p-4 bg-gradient-to-b from-black/85 via-black/40 to-transparent transition-opacity duration-300 z-20 flex items-center justify-between pointer-events-auto ${
             showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'
           }`}
         >
-          <div className="flex items-center gap-2 max-w-[70%]">
-            <span className="px-2 py-0.5 rounded bg-red-600/90 text-white font-bold text-[10px] tracking-wider uppercase">
-              KinoRoom PRO
+          <div className="flex items-center gap-2 max-w-[75%] min-w-0">
+            <span className="px-1.5 py-0.5 rounded bg-red-600/90 text-white font-bold text-[9px] sm:text-[10px] tracking-wider uppercase shrink-0">
+              KinoRoom
             </span>
             <span className="text-xs sm:text-sm font-semibold text-white truncate">
               {playbackData.media?.title || 'Воспроизведение'}
             </span>
             {currentTranslation && (
-              <span className="hidden md:inline text-[11px] text-gray-300 bg-white/10 px-2 py-0.5 rounded-full border border-white/10">
+              <span className="hidden md:inline text-[11px] text-gray-300 bg-white/10 px-2 py-0.5 rounded-full border border-white/10 truncate">
                 {currentTranslation.name}
               </span>
             )}
           </div>
 
-          <div className="flex items-center gap-2 text-xs text-gray-300">
-            {playbackData.provider?.name && (
-              <span className="hidden sm:inline text-[11px] text-gray-400 font-mono">
-                {playbackData.provider.name}
-              </span>
-            )}
+          <div className="flex items-center gap-2 text-xs text-gray-300 shrink-0">
             {onRefreshStream && (
               <button
                 onClick={() => onRefreshStream()}
@@ -663,8 +742,8 @@ export function KinoRoomPlayer({
             className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 hover:bg-black/30 transition-colors cursor-pointer group"
             aria-label="Воспроизвести"
           >
-            <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-red-600 hover:bg-red-500 text-white flex items-center justify-center shadow-2xl group-hover:scale-110 transition-transform">
-              <Play className="w-8 h-8 sm:w-10 sm:h-10 fill-current ml-1" />
+            <div className="w-14 h-14 sm:w-20 sm:h-20 rounded-full bg-red-600 hover:bg-red-500 text-white flex items-center justify-center shadow-2xl group-hover:scale-110 transition-transform">
+              <Play className="w-7 h-7 sm:w-10 sm:h-10 fill-current ml-1" />
             </div>
           </button>
         )}
@@ -672,15 +751,15 @@ export function KinoRoomPlayer({
         {/* Buffering Indicator */}
         {isBuffering && !errorMessage && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/40 pointer-events-none gap-2">
-            <Loader2 className="w-10 h-10 text-red-500 animate-spin" />
-            <span className="text-xs text-white/90 font-medium">Буферизация потока...</span>
+            <Loader2 className="w-8 h-8 sm:w-10 sm:h-10 text-red-500 animate-spin" />
+            <span className="text-xs text-white/90 font-medium">Буферизация...</span>
           </div>
         )}
 
         {/* Error Notification Overlay */}
         {errorMessage && (
-          <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-black/85 p-6 text-center space-y-3">
-            <AlertCircle className="w-12 h-12 text-red-400" />
+          <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-black/85 p-4 sm:p-6 text-center space-y-3">
+            <AlertCircle className="w-10 h-10 text-red-400" />
             <div className="max-w-md space-y-1">
               <h4 className="text-white font-bold text-sm sm:text-base">Воспроизведение недоступно</h4>
               <p className="text-gray-300 text-xs">{errorMessage}</p>
@@ -697,22 +776,160 @@ export function KinoRoomPlayer({
           </div>
         )}
 
+        {/* Mobile Settings Modal Sheet */}
+        {showMobileSettings && (
+          <div className="absolute inset-0 z-40 bg-black/90 backdrop-blur-md p-4 flex flex-col justify-between overflow-y-auto animate-fade-in sm:hidden">
+            <div className="flex items-center justify-between border-b border-white/10 pb-2">
+              <span className="text-sm font-bold text-white flex items-center gap-2">
+                <Settings className="w-4 h-4 text-red-500" /> Настройки плеера
+              </span>
+              <button
+                onClick={() => setShowMobileSettings(false)}
+                className="p-1 text-gray-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 py-2 text-xs">
+              {/* Subtitles Section */}
+              {subtitleTracks.length > 0 && (
+                <div>
+                  <div className="text-[11px] font-bold text-gray-400 mb-1.5 flex items-center gap-1.5">
+                    <Subtitles className="w-3.5 h-3.5 text-purple-400" /> Субтитры
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    <button
+                      onClick={() => handleSelectSubtitleTrack('off')}
+                      className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
+                        selectedSubtitleTrack === 'off'
+                          ? 'bg-purple-600 text-white shadow'
+                          : 'bg-white/10 text-gray-300'
+                      }`}
+                    >
+                      Отключены
+                    </button>
+                    {subtitleTracks.map((sub) => (
+                      <button
+                        key={sub.id}
+                        onClick={() => handleSelectSubtitleTrack(sub.id)}
+                        className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
+                          selectedSubtitleTrack === sub.id
+                            ? 'bg-purple-600 text-white shadow'
+                            : 'bg-white/10 text-gray-300'
+                        }`}
+                      >
+                        {sub.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Quality Section */}
+              {qualityLevels.length > 0 && (
+                <div>
+                  <div className="text-[11px] font-bold text-gray-400 mb-1.5 flex items-center gap-1.5">
+                    <Layers className="w-3.5 h-3.5 text-blue-400" /> Качество видео
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    <button
+                      onClick={() => handleSelectQuality(-1)}
+                      className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
+                        selectedQuality === -1
+                          ? 'bg-red-600 text-white shadow'
+                          : 'bg-white/10 text-gray-300'
+                      }`}
+                    >
+                      Авто
+                    </button>
+                    {qualityLevels.map((lvl, idx) => (
+                      <button
+                        key={lvl.id}
+                        onClick={() => handleSelectQuality(idx)}
+                        className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
+                          selectedQuality === idx
+                            ? 'bg-red-600 text-white shadow'
+                            : 'bg-white/10 text-gray-300'
+                        }`}
+                      >
+                        {lvl.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Speed Section */}
+              <div>
+                <div className="text-[11px] font-bold text-gray-400 mb-1.5 flex items-center gap-1.5">
+                  <Gauge className="w-3.5 h-3.5 text-amber-400" /> Скорость воспроизведения
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {[0.75, 1, 1.25, 1.5, 2].map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => handleSpeedSelect(s)}
+                      className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
+                        playbackSpeed === s
+                          ? 'bg-amber-500 text-black font-bold shadow'
+                          : 'bg-white/10 text-gray-300'
+                      }`}
+                    >
+                      {s}x
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Audio tracks Section */}
+              {audioTracks.length > 1 && (
+                <div>
+                  <div className="text-[11px] font-bold text-gray-400 mb-1.5 flex items-center gap-1.5">
+                    <Languages className="w-3.5 h-3.5 text-emerald-400" /> Аудиодорожка
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {audioTracks.map((tr) => (
+                      <button
+                        key={tr.id}
+                        onClick={() => handleSelectAudioTrack(tr.id)}
+                        className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
+                          selectedAudioTrack === tr.id
+                            ? 'bg-emerald-600 text-white shadow'
+                            : 'bg-white/10 text-gray-300'
+                        }`}
+                      >
+                        {tr.name} {tr.lang ? `(${tr.lang})` : ''}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <button
+              onClick={() => setShowMobileSettings(false)}
+              className="w-full py-2.5 bg-white/10 text-white rounded-xl text-xs font-bold transition-colors text-center cursor-pointer mt-2"
+            >
+              Закрыть
+            </button>
+          </div>
+        )}
+
         {/* Bottom Control Bar */}
         <div
-          className={`absolute bottom-0 inset-x-0 p-3 sm:p-4 bg-gradient-to-t from-black/90 via-black/60 to-transparent transition-opacity duration-300 z-20 space-y-2 pointer-events-auto ${
+          className={`absolute bottom-0 inset-x-0 p-2 sm:p-4 bg-gradient-to-t from-black/95 via-black/60 to-transparent transition-opacity duration-300 z-20 space-y-1.5 pointer-events-auto ${
             showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'
           }`}
         >
           {/* Progress / Seek Slider */}
           <div className="relative group/bar flex items-center">
-            {/* Buffered Bar */}
             <div
               className="absolute h-1 sm:h-1.5 bg-white/20 rounded-full pointer-events-none transition-all"
               style={{
                 width: `${duration > 0 ? (bufferedEnd / duration) * 100 : 0}%`
               }}
             />
-            {/* Played Bar */}
             <div
               className="absolute h-1 sm:h-1.5 bg-red-600 rounded-full pointer-events-none transition-all"
               style={{
@@ -726,17 +943,17 @@ export function KinoRoomPlayer({
               step={0.1}
               value={currentTime}
               onChange={handleSeek}
-              className="w-full h-1 sm:h-1.5 bg-transparent appearance-none cursor-pointer focus:outline-none relative z-10 accent-red-600 group-hover/bar:h-2 transition-all"
+              className="w-full h-2 sm:h-1.5 bg-transparent appearance-none cursor-pointer focus:outline-none relative z-10 accent-red-600 transition-all"
             />
           </div>
 
-          {/* Control Buttons */}
-          <div className="flex items-center justify-between text-white text-xs pt-1">
-            {/* Left Controls: Play, Rewind, Volume, Time */}
-            <div className="flex items-center gap-1.5 sm:gap-3">
+          {/* Control Buttons (Fully Responsive & Overflow-Safe) */}
+          <div className="flex items-center justify-between text-white text-xs gap-1 w-full min-w-0">
+            {/* Left Controls: Play, Rewind, Time */}
+            <div className="flex items-center gap-1 sm:gap-2 shrink-0">
               <button
                 onClick={togglePlay}
-                className="p-1 sm:p-1.5 hover:text-red-500 transition-colors cursor-pointer"
+                className="w-10 h-10 min-w-[40px] min-h-[40px] flex items-center justify-center hover:text-red-500 transition-colors cursor-pointer"
                 title={isPlaying ? 'Пауза (Space)' : 'Воспроизведение (Space)'}
               >
                 {isPlaying ? <Pause className="w-5 h-5 fill-current" /> : <Play className="w-5 h-5 fill-current ml-0.5" />}
@@ -744,7 +961,7 @@ export function KinoRoomPlayer({
 
               <button
                 onClick={() => seekRelative(-10)}
-                className="p-1 hover:text-red-500 transition-colors cursor-pointer hidden sm:block"
+                className="hidden sm:flex w-9 h-9 min-w-[36px] min-h-[36px] items-center justify-center hover:text-red-500 transition-colors cursor-pointer"
                 title="Назад 10 секунд (←)"
               >
                 <RotateCcw className="w-4 h-4" />
@@ -752,17 +969,17 @@ export function KinoRoomPlayer({
 
               <button
                 onClick={() => seekRelative(10)}
-                className="p-1 hover:text-red-500 transition-colors cursor-pointer hidden sm:block"
+                className="hidden sm:flex w-9 h-9 min-w-[36px] min-h-[36px] items-center justify-center hover:text-red-500 transition-colors cursor-pointer"
                 title="Вперед 10 секунд (→)"
               >
                 <RotateCw className="w-4 h-4" />
               </button>
 
-              {/* Volume Slider */}
-              <div className="flex items-center gap-1 group/vol">
+              {/* Volume (hidden on mobile screens, hardware keys used; visible on sm and up) */}
+              <div className="hidden sm:flex items-center gap-1 group/vol">
                 <button
                   onClick={toggleMute}
-                  className="p-1 hover:text-red-500 transition-colors cursor-pointer"
+                  className="w-9 h-9 min-w-[36px] min-h-[36px] flex items-center justify-center hover:text-red-500 transition-colors cursor-pointer"
                   title="Звук (M)"
                 >
                   {isMuted || volume === 0 ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
@@ -774,268 +991,283 @@ export function KinoRoomPlayer({
                   step={0.05}
                   value={isMuted ? 0 : volume}
                   onChange={handleVolumeChange}
-                  className="w-12 sm:w-16 h-1 bg-white/20 accent-red-600 rounded cursor-pointer hidden group-hover/vol:block sm:block"
+                  className="w-12 sm:w-16 h-1 bg-white/20 accent-red-600 rounded cursor-pointer hidden sm:block"
                 />
               </div>
 
               {/* Time Display */}
-              <div className="text-[10px] sm:text-xs text-gray-300 font-mono ml-1 whitespace-nowrap">
+              <div className="text-[10px] sm:text-xs text-gray-300 font-mono ml-0.5 sm:ml-1 whitespace-nowrap">
                 <span>{formatTime(currentTime)}</span>
                 <span className="text-gray-500"> / </span>
                 <span>{formatTime(duration)}</span>
               </div>
             </div>
 
-            {/* Right Controls: Translations, Audio Tracks, Subtitles, Quality, Speed, Fullscreen */}
-            <div className="flex items-center gap-1.5 sm:gap-2">
-              {/* 1. Translations / Voice acting selector */}
-              {availableTranslations.length > 1 && (
-                <div className="relative">
-                  <button
-                    onClick={() => {
-                      setShowTranslationMenu(!showTranslationMenu);
-                      setShowAudioMenu(false);
-                      setShowSubtitleMenu(false);
-                      setShowQualityMenu(false);
-                      setShowSpeedMenu(false);
-                    }}
-                    className="flex items-center gap-1 text-[11px] sm:text-xs font-semibold px-2 py-1 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30 transition-colors cursor-pointer"
-                    title="Выбор озвучки / перевода"
-                  >
-                    <Mic className="w-3.5 h-3.5 shrink-0" />
-                    <span className="hidden md:inline max-w-[90px] truncate">
-                      {currentTranslation?.name || 'Озвучка'}
-                    </span>
-                  </button>
+            {/* Right Controls: Desktop Dropdowns + Mobile Compact Controls */}
+            <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+              {/* --- DESKTOP TOOLBAR (Hidden on mobile) --- */}
+              <div className="hidden sm:flex items-center gap-1 sm:gap-1.5">
+                {/* 1. Translations */}
+                {availableTranslations.length > 1 && (
+                  <div className="relative">
+                    <button
+                      onClick={() => {
+                        setShowTranslationMenu(!showTranslationMenu);
+                        setShowAudioMenu(false);
+                        setShowSubtitleMenu(false);
+                        setShowQualityMenu(false);
+                        setShowSpeedMenu(false);
+                      }}
+                      className="flex items-center gap-1 text-[11px] sm:text-xs font-semibold px-2 py-1.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30 transition-colors cursor-pointer"
+                      title="Выбор перевода"
+                    >
+                      <Mic className="w-3.5 h-3.5 shrink-0" />
+                      <span className="hidden lg:inline max-w-[80px] truncate">
+                        {currentTranslation?.name || 'Озвучка'}
+                      </span>
+                    </button>
 
-                  {showTranslationMenu && (
-                    <>
-                      <div className="fixed inset-0 z-20" onClick={() => setShowTranslationMenu(false)} />
-                      <div className="absolute right-0 bottom-full mb-2 bg-[#12141f] border border-white/15 rounded-xl shadow-2xl p-1 z-30 flex flex-col gap-0.5 min-w-[160px] max-w-[220px]">
-                        <div className="px-3 py-1 text-[10px] uppercase font-bold text-gray-400 border-b border-white/10 mb-1">
-                          Варианты озвучки
+                    {showTranslationMenu && (
+                      <>
+                        <div className="fixed inset-0 z-20" onClick={() => setShowTranslationMenu(false)} />
+                        <div className="absolute right-0 bottom-full mb-2 bg-[#12141f] border border-white/15 rounded-xl shadow-2xl p-1 z-30 flex flex-col gap-0.5 min-w-[160px] max-w-[220px]">
+                          <div className="px-3 py-1 text-[10px] uppercase font-bold text-gray-400 border-b border-white/10 mb-1">
+                            Варианты озвучки
+                          </div>
+                          {availableTranslations.map((tr) => (
+                            <button
+                              key={tr.id}
+                              onClick={() => handleSelectTranslation(tr)}
+                              className={`px-3 py-1.5 rounded text-xs text-left truncate transition-colors cursor-pointer ${
+                                currentTranslation?.id === tr.id
+                                  ? 'bg-amber-500 text-black font-bold'
+                                  : 'text-gray-300 hover:bg-white/10 hover:text-white'
+                              }`}
+                            >
+                              {tr.name}
+                            </button>
+                          ))}
                         </div>
-                        {availableTranslations.map((tr) => (
-                          <button
-                            key={tr.id}
-                            onClick={() => handleSelectTranslation(tr)}
-                            className={`px-3 py-1.5 rounded text-xs text-left truncate transition-colors cursor-pointer ${
-                              currentTranslation?.id === tr.id
-                                ? 'bg-amber-500 text-black font-bold'
-                                : 'text-gray-300 hover:bg-white/10 hover:text-white'
-                            }`}
-                          >
-                            {tr.name}
-                          </button>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
+                      </>
+                    )}
+                  </div>
+                )}
 
-              {/* 2. In-Manifest Audio Tracks */}
-              {audioTracks.length > 1 && (
-                <div className="relative">
-                  <button
-                    onClick={() => {
-                      setShowAudioMenu(!showAudioMenu);
-                      setShowTranslationMenu(false);
-                      setShowSubtitleMenu(false);
-                      setShowQualityMenu(false);
-                      setShowSpeedMenu(false);
-                    }}
-                    className="flex items-center gap-1 text-[11px] sm:text-xs font-semibold px-2 py-1 rounded bg-white/10 hover:bg-white/20 text-gray-300 transition-colors cursor-pointer"
-                    title="Аудиодорожки в потоке"
-                  >
-                    <Languages className="w-3.5 h-3.5 shrink-0" />
-                    <span className="hidden lg:inline">Дорожка</span>
-                  </button>
+                {/* 2. Audio Tracks */}
+                {audioTracks.length > 1 && (
+                  <div className="relative">
+                    <button
+                      onClick={() => {
+                        setShowAudioMenu(!showAudioMenu);
+                        setShowTranslationMenu(false);
+                        setShowSubtitleMenu(false);
+                        setShowQualityMenu(false);
+                        setShowSpeedMenu(false);
+                      }}
+                      className="flex items-center gap-1 text-[11px] sm:text-xs font-semibold px-2 py-1.5 rounded bg-white/10 hover:bg-white/20 text-gray-300 transition-colors cursor-pointer"
+                      title="Аудиодорожки"
+                    >
+                      <Languages className="w-3.5 h-3.5 shrink-0" />
+                      <span className="hidden lg:inline">Дорожка</span>
+                    </button>
 
-                  {showAudioMenu && (
-                    <>
-                      <div className="fixed inset-0 z-20" onClick={() => setShowAudioMenu(false)} />
-                      <div className="absolute right-0 bottom-full mb-2 bg-[#12141f] border border-white/15 rounded-xl shadow-2xl p-1 z-30 flex flex-col gap-0.5 min-w-[150px] max-w-[200px]">
-                        <div className="px-3 py-1 text-[10px] uppercase font-bold text-gray-400 border-b border-white/10 mb-1">
-                          Аудиодорожки
+                    {showAudioMenu && (
+                      <>
+                        <div className="fixed inset-0 z-20" onClick={() => setShowAudioMenu(false)} />
+                        <div className="absolute right-0 bottom-full mb-2 bg-[#12141f] border border-white/15 rounded-xl shadow-2xl p-1 z-30 flex flex-col gap-0.5 min-w-[150px]">
+                          <div className="px-3 py-1 text-[10px] uppercase font-bold text-gray-400 border-b border-white/10 mb-1">
+                            Аудиодорожки
+                          </div>
+                          {audioTracks.map((tr) => (
+                            <button
+                              key={tr.id}
+                              onClick={() => handleSelectAudioTrack(tr.id)}
+                              className={`px-3 py-1.5 rounded text-xs text-left truncate transition-colors cursor-pointer ${
+                                selectedAudioTrack === tr.id
+                                  ? 'bg-blue-600 text-white font-bold'
+                                  : 'text-gray-300 hover:bg-white/10 hover:text-white'
+                              }`}
+                            >
+                              {tr.name} {tr.lang ? `(${tr.lang})` : ''}
+                            </button>
+                          ))}
                         </div>
-                        {audioTracks.map((tr) => (
-                          <button
-                            key={tr.id}
-                            onClick={() => handleSelectAudioTrack(tr.id)}
-                            className={`px-3 py-1.5 rounded text-xs text-left truncate transition-colors cursor-pointer ${
-                              selectedAudioTrack === tr.id
-                                ? 'bg-blue-600 text-white font-bold'
-                                : 'text-gray-300 hover:bg-white/10 hover:text-white'
-                            }`}
-                          >
-                            {tr.name} {tr.lang ? `(${tr.lang})` : ''}
-                          </button>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
+                      </>
+                    )}
+                  </div>
+                )}
 
-              {/* 3. Subtitles */}
-              {subtitleTracks.length > 0 && (
-                <div className="relative">
-                  <button
-                    onClick={() => {
-                      setShowSubtitleMenu(!showSubtitleMenu);
-                      setShowTranslationMenu(false);
-                      setShowAudioMenu(false);
-                      setShowQualityMenu(false);
-                      setShowSpeedMenu(false);
-                    }}
-                    className={`flex items-center gap-1 text-[11px] sm:text-xs font-semibold px-2 py-1 rounded transition-colors cursor-pointer ${
-                      selectedSubtitleTrack !== 'off'
-                        ? 'bg-purple-600/30 text-purple-300 border border-purple-500/30'
-                        : 'bg-white/10 hover:bg-white/20 text-gray-300'
-                    }`}
-                    title="Субтитры"
-                  >
-                    <Subtitles className="w-3.5 h-3.5 shrink-0" />
-                    <span className="hidden lg:inline">Субтитры</span>
-                  </button>
+                {/* 3. Subtitles (Desktop) */}
+                {subtitleTracks.length > 0 && (
+                  <div className="relative">
+                    <button
+                      onClick={() => {
+                        setShowSubtitleMenu(!showSubtitleMenu);
+                        setShowTranslationMenu(false);
+                        setShowAudioMenu(false);
+                        setShowQualityMenu(false);
+                        setShowSpeedMenu(false);
+                      }}
+                      className={`flex items-center gap-1 text-[11px] sm:text-xs font-semibold px-2 py-1.5 rounded transition-colors cursor-pointer ${
+                        selectedSubtitleTrack !== 'off'
+                          ? 'bg-purple-600/30 text-purple-300 border border-purple-500/30'
+                          : 'bg-white/10 hover:bg-white/20 text-gray-300'
+                      }`}
+                      title="Субтитры"
+                    >
+                      <Subtitles className="w-3.5 h-3.5 shrink-0" />
+                      <span className="hidden lg:inline">Субтитры</span>
+                    </button>
 
-                  {showSubtitleMenu && (
-                    <>
-                      <div className="fixed inset-0 z-20" onClick={() => setShowSubtitleMenu(false)} />
-                      <div className="absolute right-0 bottom-full mb-2 bg-[#12141f] border border-white/15 rounded-xl shadow-2xl p-1 z-30 flex flex-col gap-0.5 min-w-[140px] max-w-[200px]">
-                        <div className="px-3 py-1 text-[10px] uppercase font-bold text-gray-400 border-b border-white/10 mb-1">
-                          Субтитры
-                        </div>
-                        <button
-                          onClick={() => handleSelectSubtitleTrack('off')}
-                          className={`px-3 py-1.5 rounded text-xs text-left transition-colors cursor-pointer ${
-                            selectedSubtitleTrack === 'off'
-                              ? 'bg-purple-600 text-white font-bold'
-                              : 'text-gray-300 hover:bg-white/10 hover:text-white'
-                          }`}
-                        >
-                          Отключены
-                        </button>
-                        {subtitleTracks.map((sub) => (
+                    {showSubtitleMenu && (
+                      <>
+                        <div className="fixed inset-0 z-20" onClick={() => setShowSubtitleMenu(false)} />
+                        <div className="absolute right-0 bottom-full mb-2 bg-[#12141f] border border-white/15 rounded-xl shadow-2xl p-1 z-30 flex flex-col gap-0.5 min-w-[140px]">
+                          <div className="px-3 py-1 text-[10px] uppercase font-bold text-gray-400 border-b border-white/10 mb-1">
+                            Субтитры
+                          </div>
                           <button
-                            key={sub.id}
-                            onClick={() => handleSelectSubtitleTrack(sub.id)}
-                            className={`px-3 py-1.5 rounded text-xs text-left truncate transition-colors cursor-pointer ${
-                              selectedSubtitleTrack === sub.id
+                            onClick={() => handleSelectSubtitleTrack('off')}
+                            className={`px-3 py-1.5 rounded text-xs text-left transition-colors cursor-pointer ${
+                              selectedSubtitleTrack === 'off'
                                 ? 'bg-purple-600 text-white font-bold'
                                 : 'text-gray-300 hover:bg-white/10 hover:text-white'
                             }`}
                           >
-                            {sub.label}
+                            Отключены
                           </button>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
-
-              {/* 4. Quality Selector */}
-              {qualityLevels.length > 0 && (
-                <div className="relative">
-                  <button
-                    onClick={() => {
-                      setShowQualityMenu(!showQualityMenu);
-                      setShowTranslationMenu(false);
-                      setShowAudioMenu(false);
-                      setShowSubtitleMenu(false);
-                      setShowSpeedMenu(false);
-                    }}
-                    className="flex items-center gap-1 text-[11px] sm:text-xs font-semibold px-2 py-1 rounded bg-white/10 hover:bg-white/20 text-gray-300 transition-colors cursor-pointer"
-                    title="Качество видео"
-                  >
-                    <Layers className="w-3.5 h-3.5 shrink-0" />
-                    <span>
-                      {selectedQuality === -1 ? 'Авто' : qualityLevels[selectedQuality]?.label || 'Качество'}
-                    </span>
-                  </button>
-
-                  {showQualityMenu && (
-                    <>
-                      <div className="fixed inset-0 z-20" onClick={() => setShowQualityMenu(false)} />
-                      <div className="absolute right-0 bottom-full mb-2 bg-[#12141f] border border-white/15 rounded-xl shadow-2xl p-1 z-30 flex flex-col gap-0.5 min-w-[120px]">
-                        <div className="px-3 py-1 text-[10px] uppercase font-bold text-gray-400 border-b border-white/10 mb-1">
-                          Качество
+                          {subtitleTracks.map((sub) => (
+                            <button
+                              key={sub.id}
+                              onClick={() => handleSelectSubtitleTrack(sub.id)}
+                              className={`px-3 py-1.5 rounded text-xs text-left truncate transition-colors cursor-pointer ${
+                                selectedSubtitleTrack === sub.id
+                                  ? 'bg-purple-600 text-white font-bold'
+                                  : 'text-gray-300 hover:bg-white/10 hover:text-white'
+                              }`}
+                            >
+                              {sub.label}
+                            </button>
+                          ))}
                         </div>
-                        <button
-                          onClick={() => handleSelectQuality(-1)}
-                          className={`px-3 py-1.5 rounded text-xs text-left transition-colors cursor-pointer ${
-                            selectedQuality === -1
-                              ? 'bg-red-600 text-white font-bold'
-                              : 'text-gray-300 hover:bg-white/10 hover:text-white'
-                          }`}
-                        >
-                          Авто
-                        </button>
-                        {qualityLevels.map((lvl, idx) => (
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* 4. Quality (Desktop) */}
+                {qualityLevels.length > 0 && (
+                  <div className="relative">
+                    <button
+                      onClick={() => {
+                        setShowQualityMenu(!showQualityMenu);
+                        setShowTranslationMenu(false);
+                        setShowAudioMenu(false);
+                        setShowSubtitleMenu(false);
+                        setShowSpeedMenu(false);
+                      }}
+                      className="flex items-center gap-1 text-[11px] sm:text-xs font-semibold px-2 py-1.5 rounded bg-white/10 hover:bg-white/20 text-gray-300 transition-colors cursor-pointer"
+                      title="Качество"
+                    >
+                      <Layers className="w-3.5 h-3.5 shrink-0" />
+                      <span>
+                        {selectedQuality === -1 ? 'Авто' : qualityLevels[selectedQuality]?.label || 'Качество'}
+                      </span>
+                    </button>
+
+                    {showQualityMenu && (
+                      <>
+                        <div className="fixed inset-0 z-20" onClick={() => setShowQualityMenu(false)} />
+                        <div className="absolute right-0 bottom-full mb-2 bg-[#12141f] border border-white/15 rounded-xl shadow-2xl p-1 z-30 flex flex-col gap-0.5 min-w-[120px]">
+                          <div className="px-3 py-1 text-[10px] uppercase font-bold text-gray-400 border-b border-white/10 mb-1">
+                            Качество
+                          </div>
                           <button
-                            key={lvl.id}
-                            onClick={() => handleSelectQuality(idx)}
+                            onClick={() => handleSelectQuality(-1)}
                             className={`px-3 py-1.5 rounded text-xs text-left transition-colors cursor-pointer ${
-                              selectedQuality === idx
+                              selectedQuality === -1
                                 ? 'bg-red-600 text-white font-bold'
                                 : 'text-gray-300 hover:bg-white/10 hover:text-white'
                             }`}
                           >
-                            {lvl.label}
+                            Авто
+                          </button>
+                          {qualityLevels.map((lvl, idx) => (
+                            <button
+                              key={lvl.id}
+                              onClick={() => handleSelectQuality(idx)}
+                              className={`px-3 py-1.5 rounded text-xs text-left transition-colors cursor-pointer ${
+                                selectedQuality === idx
+                                  ? 'bg-red-600 text-white font-bold'
+                                  : 'text-gray-300 hover:bg-white/10 hover:text-white'
+                              }`}
+                            >
+                              {lvl.label}
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* 5. Speed (Desktop) */}
+                <div className="relative">
+                  <button
+                    onClick={() => {
+                      setShowSpeedMenu(!showSpeedMenu);
+                      setShowTranslationMenu(false);
+                      setShowAudioMenu(false);
+                      setShowSubtitleMenu(false);
+                      setShowQualityMenu(false);
+                    }}
+                    className="flex items-center gap-1 text-[11px] sm:text-xs font-bold px-2 py-1.5 rounded bg-white/10 hover:bg-white/20 text-gray-300 transition-colors cursor-pointer"
+                    title="Скорость"
+                  >
+                    <Gauge className="w-3.5 h-3.5 shrink-0" />
+                    <span>{playbackSpeed}x</span>
+                  </button>
+
+                  {showSpeedMenu && (
+                    <>
+                      <div className="fixed inset-0 z-20" onClick={() => setShowSpeedMenu(false)} />
+                      <div className="absolute right-0 bottom-full mb-2 bg-[#12141f] border border-white/15 rounded-xl shadow-2xl p-1 z-30 flex flex-col gap-0.5 min-w-[90px]">
+                        {[0.5, 0.75, 1, 1.25, 1.5, 2].map((s) => (
+                          <button
+                            key={s}
+                            onClick={() => handleSpeedSelect(s)}
+                            className={`px-3 py-1 rounded text-xs text-left transition-colors cursor-pointer ${
+                              playbackSpeed === s
+                                ? 'bg-amber-500 text-black font-bold'
+                                : 'text-gray-300 hover:bg-white/10 hover:text-white'
+                            }`}
+                          >
+                            {s}x
                           </button>
                         ))}
                       </div>
                     </>
                   )}
                 </div>
-              )}
-
-              {/* 5. Speed Selector */}
-              <div className="relative">
-                <button
-                  onClick={() => {
-                    setShowSpeedMenu(!showSpeedMenu);
-                    setShowTranslationMenu(false);
-                    setShowAudioMenu(false);
-                    setShowSubtitleMenu(false);
-                    setShowQualityMenu(false);
-                  }}
-                  className="flex items-center gap-1 text-[11px] sm:text-xs font-bold px-2 py-1 rounded bg-white/10 hover:bg-white/20 text-gray-300 transition-colors cursor-pointer"
-                  title="Скорость"
-                >
-                  <Gauge className="w-3.5 h-3.5 shrink-0" />
-                  <span>{playbackSpeed}x</span>
-                </button>
-
-                {showSpeedMenu && (
-                  <>
-                    <div className="fixed inset-0 z-20" onClick={() => setShowSpeedMenu(false)} />
-                    <div className="absolute right-0 bottom-full mb-2 bg-[#12141f] border border-white/15 rounded-xl shadow-2xl p-1 z-30 flex flex-col gap-0.5 min-w-[90px]">
-                      {[0.5, 0.75, 1, 1.25, 1.5, 2].map((s) => (
-                        <button
-                          key={s}
-                          onClick={() => handleSpeedSelect(s)}
-                          className={`px-3 py-1 rounded text-xs text-left transition-colors cursor-pointer ${
-                            playbackSpeed === s
-                              ? 'bg-amber-500 text-black font-bold'
-                              : 'text-gray-300 hover:bg-white/10 hover:text-white'
-                          }`}
-                        >
-                          {s}x
-                        </button>
-                      ))}
-                    </div>
-                  </>
-                )}
               </div>
 
-              {/* 6. Fullscreen */}
+              {/* --- MOBILE COMPACT BUTTONS (Shown on mobile only) --- */}
+              <div className="flex sm:hidden items-center gap-1">
+                {/* Mobile Settings Gear Button */}
+                <button
+                  onClick={() => setShowMobileSettings(true)}
+                  className="w-10 h-10 min-w-[40px] min-h-[40px] flex items-center justify-center text-gray-300 hover:text-white transition-colors cursor-pointer"
+                  title="Настройки"
+                >
+                  <Settings className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* 6. Fullscreen Button (Always pinned and accessible, min 40x40px touch zone) */}
               <button
                 onClick={toggleFullscreen}
-                className="p-1 sm:p-1.5 hover:text-red-500 transition-colors cursor-pointer"
-                title="На весь экран (F)"
+                className="w-10 h-10 min-w-[40px] min-h-[40px] flex items-center justify-center hover:text-red-500 transition-colors cursor-pointer shrink-0"
+                title="На весь экран"
               >
                 {isFullscreen ? <Minimize className="w-4 h-4 sm:w-5 sm:h-5" /> : <Maximize className="w-4 h-4 sm:w-5 sm:h-5" />}
               </button>

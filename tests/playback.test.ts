@@ -117,6 +117,67 @@ test('PlaybackRegistry resolves Big Buck Bunny and Apple BipBop streams', async 
   assert.match(bipbop.stream.url, /\.m3u8/);
 });
 
+test('Subtitle Track switching simulation: ON (ru) -> OFF -> ON (en) -> other language -> OFF', () => {
+  const item = DEMO_MEDIA_LIBRARY['tears-of-steel'];
+  const stream = item.streamMap['tos-orig-en'];
+  const subs = stream.subtitles;
+
+  assert.equal(subs.length, 2, 'Tears of steel must have exactly 2 WebVTT subtitle tracks');
+  assert.equal(subs[0].isDefault, false, 'Russian subtitle must not be auto-enabled by default');
+  assert.equal(subs[1].isDefault, false, 'English subtitle must not be auto-enabled by default');
+
+  // Mock HTML5 textTracks collection in browser
+  const mockTracks = subs.map((s) => ({
+    id: s.id,
+    label: s.label,
+    language: s.lang,
+    mode: 'disabled' as 'disabled' | 'showing' | 'hidden'
+  }));
+
+  // Helper matching KinoRoomPlayer applySubtitleTrackMode logic
+  const simulateApplySubtitle = (targetSubId: string) => {
+    const targetSub = subs.find((s) => s.id === targetSubId);
+    for (const tr of mockTracks) {
+      if (targetSubId === 'off' || !targetSub) {
+        tr.mode = 'disabled';
+      } else {
+        const isMatch =
+          tr.id === targetSub.id ||
+          tr.label === targetSub.label ||
+          (Boolean(tr.language) && tr.language === targetSub.lang);
+        tr.mode = isMatch ? 'showing' : 'disabled';
+      }
+    }
+  };
+
+  // 1. Initial: all off
+  simulateApplySubtitle('off');
+  assert.ok(mockTracks.every((t) => t.mode === 'disabled'), 'Initially all tracks disabled');
+
+  // 2. ON -> Russian
+  simulateApplySubtitle('sub-ru');
+  assert.equal(mockTracks.find((t) => t.id === 'sub-ru')?.mode, 'showing', 'Russian track must be showing');
+  assert.equal(mockTracks.find((t) => t.id === 'sub-en')?.mode, 'disabled', 'English track must be disabled');
+
+  // 3. OFF -> Disabled
+  simulateApplySubtitle('off');
+  assert.ok(mockTracks.every((t) => t.mode === 'disabled'), 'After selecting off, all tracks disabled');
+
+  // 4. ON -> English
+  simulateApplySubtitle('sub-en');
+  assert.equal(mockTracks.find((t) => t.id === 'sub-en')?.mode, 'showing', 'English track must be showing');
+  assert.equal(mockTracks.find((t) => t.id === 'sub-ru')?.mode, 'disabled', 'Russian track must be disabled');
+
+  // 5. Switch to another language -> Russian again
+  simulateApplySubtitle('sub-ru');
+  assert.equal(mockTracks.find((t) => t.id === 'sub-ru')?.mode, 'showing', 'Switched back to Russian: Russian showing');
+  assert.equal(mockTracks.find((t) => t.id === 'sub-en')?.mode, 'disabled', 'Switched back to Russian: English disabled');
+
+  // 6. OFF -> Final check
+  simulateApplySubtitle('off');
+  assert.ok(mockTracks.every((t) => t.mode === 'disabled'), 'Finally all tracks disabled');
+});
+
 test('Live CDN HLS Manifest Reachability Test', async () => {
   const sampleUrl = DEMO_MEDIA_LIBRARY['tears-of-steel'].streamMap['tos-orig-en'].url;
 

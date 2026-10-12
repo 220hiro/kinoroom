@@ -49,14 +49,14 @@ export function Navbar() {
         scrolled ? 'bg-[#090a0f]/95 backdrop-blur-md shadow-2xl py-3 border-b border-white/5' : 'bg-gradient-to-b from-[#090a0f] via-[#090a0f]/80 to-transparent py-5'
       }`}
     >
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-4">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 flex items-center justify-between gap-2 sm:gap-4">
         {/* Brand / Logo */}
-        <div className="flex items-center gap-8">
-          <Link href="/" className="flex items-center gap-2 group">
-            <span className="text-2xl font-black tracking-wider text-red-600 group-hover:scale-105 transition-transform">
+        <div className="flex items-center gap-2 sm:gap-8 shrink-0">
+          <Link href="/" className="flex items-center gap-1.5 sm:gap-2 group">
+            <span className="text-xl sm:text-2xl font-black tracking-wider text-red-600 group-hover:scale-105 transition-transform">
               КИНО<span className="text-white">РУМ</span>
             </span>
-            <span className="text-[10px] uppercase font-bold tracking-widest px-1.5 py-0.5 rounded bg-red-600/20 text-red-400 border border-red-500/30">
+            <span className="text-[9px] sm:text-[10px] uppercase font-bold tracking-widest px-1 sm:px-1.5 py-0.5 rounded bg-red-600/20 text-red-400 border border-red-500/30">
               PRO
             </span>
           </Link>
@@ -91,18 +91,18 @@ export function Navbar() {
         </div>
 
         {/* Right Actions: Search + Profile */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
           {/* Search Bar */}
           <form onSubmit={handleSearchSubmit} className="relative">
             <div className="relative flex items-center">
               <input
                 type="text"
-                placeholder="Фильм, сериал, персона..."
+                placeholder="Поиск..."
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                className="w-44 sm:w-64 bg-white/5 border border-white/10 rounded-full py-1.5 pl-9 pr-4 text-sm text-white placeholder-gray-400 focus:outline-none focus:border-red-500/80 focus:bg-white/10 focus:w-72 transition-all duration-300"
+                className="w-24 xs:w-32 sm:w-64 bg-white/5 border border-white/10 rounded-full py-1.5 pl-7 sm:pl-9 pr-3 text-xs sm:text-sm text-white placeholder-gray-400 focus:outline-none focus:border-red-500/80 focus:bg-white/10 focus:w-36 sm:focus:w-72 transition-all duration-300"
               />
-              <Search className="w-4 h-4 text-gray-400 absolute left-3 pointer-events-none" />
+              <Search className="w-3.5 sm:w-4 h-3.5 sm:h-4 text-gray-400 absolute left-2 sm:left-3 pointer-events-none" />
             </div>
           </form>
 
@@ -110,11 +110,11 @@ export function Navbar() {
           <div className="relative">
             <button
               onClick={() => setIsProfileOpen(!isProfileOpen)}
-              className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-full px-3 py-1.5 text-xs text-white transition-all cursor-pointer"
+              className="flex items-center gap-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-full px-2 sm:px-3 py-1.5 text-xs text-white transition-all cursor-pointer"
             >
-              <span className="text-base">{activeProfile?.avatar || '🎬'}</span>
+              <span className="text-sm sm:text-base">{activeProfile?.avatar || '🎬'}</span>
               <span className="font-medium hidden sm:inline">{activeProfile?.name || 'Профиль'}</span>
-              <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+              <ChevronDown className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-gray-400" />
             </button>
 
             {isProfileOpen && (

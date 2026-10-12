@@ -56,6 +56,7 @@ export interface PlaybackRequest {
 
 export interface PlaybackResponse {
   success: boolean;
+  code?: string;
   media: {
     id: string | number;
     title: string;

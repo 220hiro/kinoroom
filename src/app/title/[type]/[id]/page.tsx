@@ -130,7 +130,11 @@ export default function TitlePage({ params }: TitlePageProps) {
         setPlaybackData(data);
       } else {
         setPlaybackData(null);
-        setPlaybackError(data.error || 'Для данного тайтла пока нет подтвержденного HLS-потока в открытом доступе.');
+        setPlaybackError(
+          data.error === 'SOURCE_UNAVAILABLE' || data.code === 'SOURCE_UNAVAILABLE'
+            ? 'Для данного фильма в открытом доступе пока нет подтвержденного HLS-потока.'
+            : (data.error || 'Для данного тайтла пока нет подтвержденного HLS-потока в открытом доступе.')
+        );
       }
     } catch (e: any) {
       setPlaybackData(null);
@@ -503,7 +507,7 @@ export default function TitlePage({ params }: TitlePageProps) {
                 </div>
               ) : playbackData && playbackData.success ? (
                 <KinoRoomPlayer
-                  key={`${playbackData.stream.url}-${playbackData.currentTranslation?.id}`}
+                  key={media.id}
                   playbackData={playbackData}
                   initialTime={savedProgressTime ?? undefined}
                   onTimeUpdate={handleTimeUpdate}
@@ -524,13 +528,6 @@ export default function TitlePage({ params }: TitlePageProps) {
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
-                    <button
-                      onClick={() => resolvePlaybackStream('tears-of-steel')}
-                      className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-lg shadow-red-600/20"
-                    >
-                      <Play className="w-3.5 h-3.5 fill-current" />
-                      <span>Запустить тестовый HLS-стрим в плеере</span>
-                    </button>
                     {torrents.length > 0 && (
                       <button
                         onClick={() => setActiveTab('torrent')}

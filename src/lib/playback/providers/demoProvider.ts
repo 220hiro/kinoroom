@@ -22,49 +22,33 @@ export const DEMO_MEDIA_LIBRARY: Record<string, DemoMediaItem> = {
   'tears-of-steel': {
     id: 'tears-of-steel',
     title: 'Слёзы стали (Tears of Steel)',
-    description: 'Фантастический постапокалиптический фильм Blender Foundation в высоком разрешении 1080p с многодорожечным звуком и субтитрами.',
+    description: 'Открытый научно-фантастический фильм Blender Foundation (2012) в качестве 1080p с адаптивным HLS-потоком.',
     year: 2012,
     duration: 734,
     poster: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=800&auto=format&fit=crop',
     backdrop: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1600&auto=format&fit=crop',
     translations: [
       {
-        id: 'tos-dub-ru',
-        name: 'Русский дубляж (Stereo)',
-        type: 'dub',
-        quality: '1080p',
-        providerId: 'demo-licensed'
-      },
-      {
         id: 'tos-orig-en',
-        name: 'Оригинал (English 5.1)',
+        name: 'Оригинал (English Stereo)',
         type: 'original',
-        quality: '1080p',
-        providerId: 'demo-licensed'
-      },
-      {
-        id: 'tos-commentary',
-        name: 'Режиссёрские комментарии',
-        type: 'voiceover',
         quality: '1080p',
         providerId: 'demo-licensed'
       }
     ],
     streamMap: {
-      'tos-dub-ru': {
+      'tos-orig-en': {
         url: 'https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.m3u8',
         type: 'hls',
         qualities: [
           { id: 'auto', label: 'Авто', height: 0 },
-          { id: '1080p', label: '1080p', height: 1080, bitrate: 4500000 },
-          { id: '720p', label: '720p', height: 720, bitrate: 2200000 },
-          { id: '480p', label: '480p', height: 480, bitrate: 1100000 },
-          { id: '360p', label: '360p', height: 360, bitrate: 650000 }
+          { id: '1080p', label: '1080p (2.4M)', height: 1080, bitrate: 2468000 },
+          { id: '750p', label: '750p (1.7M)', height: 750, bitrate: 1727000 },
+          { id: '350p', label: '350p (1.2M)', height: 350, bitrate: 1197000 },
+          { id: '200p', label: '200p (930k)', height: 200, bitrate: 932000 }
         ],
         audioTracks: [
-          { id: 'ru-dub', name: 'Русский (Дубляж)', lang: 'ru', isDefault: true },
-          { id: 'en-orig', name: 'English (Original)', lang: 'en' },
-          { id: 'commentary', name: 'Director Commentary', lang: 'en' }
+          { id: 'en-orig', name: 'English (Original)', lang: 'en', isDefault: true }
         ],
         subtitles: [
           {
@@ -81,45 +65,9 @@ export const DEMO_MEDIA_LIBRARY: Record<string, DemoMediaItem> = {
             label: 'English',
             url: '/subtitles/subtitles-en.vtt',
             format: 'vtt',
-            isDefault: false
-          }
-        ]
-      },
-      'tos-orig-en': {
-        url: 'https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.m3u8',
-        type: 'hls',
-        qualities: [
-          { id: 'auto', label: 'Авто', height: 0 },
-          { id: '1080p', label: '1080p', height: 1080, bitrate: 4500000 },
-          { id: '720p', label: '720p', height: 720, bitrate: 2200000 }
-        ],
-        audioTracks: [
-          { id: 'en-orig', name: 'English (Original)', lang: 'en', isDefault: true },
-          { id: 'ru-dub', name: 'Русский (Дубляж)', lang: 'ru' }
-        ],
-        subtitles: [
-          {
-            id: 'sub-en',
-            lang: 'en',
-            label: 'English',
-            url: '/subtitles/subtitles-en.vtt',
-            format: 'vtt',
             isDefault: true
           }
         ]
-      },
-      'tos-commentary': {
-        url: 'https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.m3u8',
-        type: 'hls',
-        qualities: [
-          { id: 'auto', label: 'Авто', height: 0 },
-          { id: '720p', label: '720p', height: 720, bitrate: 2200000 }
-        ],
-        audioTracks: [
-          { id: 'commentary', name: 'Director Commentary', lang: 'en', isDefault: true },
-          { id: 'en-orig', name: 'English (Original)', lang: 'en' }
-        ],
-        subtitles: []
       }
     }
   },
@@ -134,7 +82,7 @@ export const DEMO_MEDIA_LIBRARY: Record<string, DemoMediaItem> = {
     translations: [
       {
         id: 'bbb-orig',
-        name: 'Оригинальная звуковая дорожка',
+        name: 'Оригинал (Original Audio)',
         type: 'original',
         quality: '1080p',
         providerId: 'demo-licensed'
@@ -158,49 +106,39 @@ export const DEMO_MEDIA_LIBRARY: Record<string, DemoMediaItem> = {
       }
     }
   },
-  'sintel': {
-    id: 'sintel',
-    title: 'Синтел (Sintel)',
-    description: 'Эпическая фэнтези драма о девочке и драконе с полноценным адаптивным HLS стримом и субтитрами.',
-    year: 2010,
-    duration: 888,
+  'apple-bipbop': {
+    id: 'apple-bipbop',
+    title: 'Тестовый HLS-стрим Apple (BipBop fMP4)',
+    description: 'Официальный эталонный HLS-поток Apple с фрагментированным MP4 (fMP4), 1080p 60fps и многоязычными аудиодорожками.',
+    year: 2020,
+    duration: 600,
     poster: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=800&auto=format&fit=crop',
     backdrop: 'https://images.unsplash.com/photo-1478760329108-5c3ed9d495a0?w=1600&auto=format&fit=crop',
     translations: [
       {
-        id: 'sintel-en',
-        name: 'English (Original 5.1)',
+        id: 'bipbop-multi',
+        name: 'Многоязычный поток (fMP4)',
         type: 'original',
         quality: '1080p',
         providerId: 'demo-licensed'
       }
     ],
     streamMap: {
-      'sintel-en': {
+      'bipbop-multi': {
         url: 'https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_fmp4/master.m3u8',
         type: 'hls',
         qualities: [
           { id: 'auto', label: 'Авто', height: 0 },
-          { id: '1080p', label: '1080p', height: 1080, bitrate: 4000000 },
-          { id: '720p', label: '720p', height: 720, bitrate: 2000000 },
-          { id: '480p', label: '480p', height: 480, bitrate: 1000000 }
+          { id: '1080p', label: '1080p (8.0M)', height: 1080, bitrate: 8000000 },
+          { id: '540p', label: '540p (2.2M)', height: 540, bitrate: 2170000 }
         ],
         audioTracks: [
-          { id: 'en', name: 'English', lang: 'en', isDefault: true },
-          { id: 'de', name: 'Deutsch', lang: 'de' },
-          { id: 'es', name: 'Español', lang: 'es' },
-          { id: 'fr', name: 'Français', lang: 'fr' }
+          { id: 'aud1', name: 'English', lang: 'en', isDefault: true },
+          { id: 'aud2', name: 'Deutsch', lang: 'de' },
+          { id: 'aud3', name: 'Español', lang: 'es' },
+          { id: 'aud4', name: 'Français', lang: 'fr' }
         ],
-        subtitles: [
-          {
-            id: 'sub-en',
-            lang: 'en',
-            label: 'English',
-            url: '/subtitles/subtitles-en.vtt',
-            format: 'vtt',
-            isDefault: true
-          }
-        ]
+        subtitles: []
       }
     }
   }
@@ -208,21 +146,24 @@ export const DEMO_MEDIA_LIBRARY: Record<string, DemoMediaItem> = {
 
 export class DemoLicensedProvider implements MediaProvider {
   readonly id = 'demo-licensed';
-  readonly name = 'Лицензированные открытые медиапотоки (HLS / MP4)';
-  readonly priority = 100;
+  readonly name = 'Лицензированные открытые медиапотоки (HLS)';
+  readonly priority = 10;
 
   async isAvailable(): Promise<boolean> {
-    return true; // Always available on Vercel and local
+    return true;
   }
 
   async getTranslations(request: PlaybackRequest): Promise<PlaybackTranslation[]> {
     const key = this.resolveKey(request);
+    if (!key) return [];
     const item = DEMO_MEDIA_LIBRARY[key];
     return item ? item.translations : [];
   }
 
   async resolvePlayback(request: PlaybackRequest): Promise<PlaybackResponse | null> {
     const key = this.resolveKey(request);
+    if (!key) return null;
+
     const item = DEMO_MEDIA_LIBRARY[key];
     if (!item) return null;
 
@@ -249,17 +190,28 @@ export class DemoLicensedProvider implements MediaProvider {
     };
   }
 
-  private resolveKey(request: PlaybackRequest): string {
-    const idStr = String(request.mediaId).toLowerCase();
-    if (idStr.includes('tear') || idStr === 'tears-of-steel') return 'tears-of-steel';
-    if (idStr.includes('bunny') || idStr === 'big-buck-bunny') return 'big-buck-bunny';
-    if (idStr.includes('sintel') || idStr === 'sintel') return 'sintel';
-    // If request has 'demo' or default
-    if (idStr.startsWith('demo-')) {
-      const suffix = idStr.replace('demo-', '');
-      if (DEMO_MEDIA_LIBRARY[suffix]) return suffix;
+  private resolveKey(request: PlaybackRequest): string | null {
+    // Numeric mediaId (e.g. TMDB ID 969681) is never a demo item
+    if (typeof request.mediaId === 'number') {
+      return null;
     }
-    // Fallback to Tears of Steel for demo testing
-    return 'tears-of-steel';
+
+    const idStr = String(request.mediaId).trim().toLowerCase();
+
+    // Direct match against registered demo library
+    if (DEMO_MEDIA_LIBRARY[idStr]) {
+      return idStr;
+    }
+
+    // Match with 'demo-' prefix
+    if (idStr.startsWith('demo-')) {
+      const stripped = idStr.replace('demo-', '');
+      if (DEMO_MEDIA_LIBRARY[stripped]) {
+        return stripped;
+      }
+    }
+
+    // Strict: never fall back to demo content for unknown IDs or catalog titles
+    return null;
   }
 }

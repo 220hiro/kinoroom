@@ -67,6 +67,8 @@ class MediaProviderRegistry {
     // return an honest, non-deceptive error response
     return {
       success: false,
+      code: 'SOURCE_UNAVAILABLE',
+      error: 'SOURCE_UNAVAILABLE',
       media: {
         id: request.mediaId,
         title: `Медиа #${request.mediaId}`,
@@ -85,8 +87,7 @@ class MediaProviderRegistry {
       provider: {
         id: 'none',
         name: 'Нет доступных источников'
-      },
-      error: 'Для данного фильма в открытом доступе пока нет подтвержденного HLS-потока без рекламы. Вы можете запустить тестовый HLS-стрим для проверки плеера или воспользоваться торрентами.'
+      }
     };
   }
 }

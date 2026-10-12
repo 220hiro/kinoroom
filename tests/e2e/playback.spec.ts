@@ -60,12 +60,23 @@ test.describe('KinoRoom Player & Playback API E2E', () => {
     });
   }
 
-  test('Subtitles: ON (ru) -> OFF -> ON (en) -> other language -> OFF state transitions', async ({ page, browserName }) => {
+  test('Subtitles Lifecycle: Changing subtitles never resets currentTime, pauses video, or recreates Hls.js', async ({ page, browserName }) => {
     if (browserName === 'webkit' && process.platform === 'win32') {
       test.skip(true, 'Playwright WebKit on Windows lacks HLS codecs (real Safari on iPhone uses native AVFoundation)');
     }
 
     await page.setViewportSize({ width: 390, height: 844 });
+
+    // Track .m3u8 manifest network requests after playback starts to ensure no redundant re-fetches
+    let manifestRequestsAfterStart = 0;
+    let hasStartedPlayback = false;
+
+    page.on('request', (req) => {
+      if (hasStartedPlayback && req.url().includes('.m3u8')) {
+        manifestRequestsAfterStart++;
+      }
+    });
+
     await page.goto('/player-test');
 
     const videoLocator = page.locator('video');
@@ -85,71 +96,136 @@ test.describe('KinoRoom Player & Playback API E2E', () => {
     });
     expect(initialTrackModes.every((t) => t.mode === 'disabled')).toBe(true);
 
-    // 2. Open mobile settings
+    // Start playback (muted to ensure autoplay permissions in headless environments)
+    await page.evaluate(() => {
+      const v = document.querySelector('video');
+      if (v) {
+        v.muted = true;
+        return v.play();
+      }
+    });
+
+    // 2. Wait until currentTime > 5 seconds
+    await page.waitForFunction(() => {
+      const v = document.querySelector('video');
+      return v && !v.paused && v.currentTime >= 5.0;
+    }, null, { timeout: 20_000 });
+
+    hasStartedPlayback = true;
+
+    // Capture baseline state at > 5.0s
+    const baselineState = await page.evaluate(() => {
+      const v = document.querySelector('video');
+      return {
+        currentTime: v ? v.currentTime : 0,
+        paused: v ? v.paused : true,
+        hlsCount: (window as any).__hlsInstanceCount || 1
+      };
+    });
+    expect(baselineState.currentTime).toBeGreaterThanOrEqual(5.0);
+    expect(baselineState.paused).toBe(false);
+
+    // 3. Open settings and select Russian subtitles
     const settingsButton = page.locator('button[title="Настройки"]');
     await settingsButton.click();
     await expect(page.locator('text=Настройки плеера')).toBeVisible();
 
-    // 3. Select Russian subtitles
     const ruSubBtn = page.locator('button:has-text("Русские")');
     await ruSubBtn.click();
 
-    // Verify Russian track mode is 'showing'
-    const ruMode = await page.evaluate(() => {
+    // 4. Verify Russian subtitles active AND video did NOT reset or pause
+    const stateAfterRu = await page.evaluate(() => {
       const v = document.querySelector('video');
       if (!v || !v.textTracks) return null;
-      const tr = Array.from(v.textTracks).find((t) => t.label === 'Русские');
-      return tr ? tr.mode : null;
+      const ru = Array.from(v.textTracks).find((t) => t.label === 'Русские');
+      return {
+        ruMode: ru ? ru.mode : null,
+        currentTime: v.currentTime,
+        paused: v.paused,
+        hlsCount: (window as any).__hlsInstanceCount || 1
+      };
     });
-    expect(ruMode).toBe('showing');
+    expect(stateAfterRu).not.toBeNull();
+    expect(stateAfterRu!.ruMode).toBe('showing');
+    expect(stateAfterRu!.currentTime).toBeGreaterThanOrEqual(5.0);
+    expect(stateAfterRu!.paused).toBe(false);
+    expect(stateAfterRu!.hlsCount).toBe(baselineState.hlsCount);
 
-    // 4. Turn subtitles OFF
+    // 5. Turn subtitles OFF
     await settingsButton.click();
     await page.locator('button:has-text("Отключены")').click();
 
-    const offMode = await page.evaluate(() => {
+    const stateAfterOff1 = await page.evaluate(() => {
       const v = document.querySelector('video');
-      if (!v || !v.textTracks) return [];
-      return Array.from(v.textTracks).map((t) => t.mode);
+      if (!v || !v.textTracks) return null;
+      return {
+        allDisabled: Array.from(v.textTracks).every((t) => t.mode === 'disabled'),
+        currentTime: v.currentTime,
+        paused: v.paused,
+        hlsCount: (window as any).__hlsInstanceCount || 1
+      };
     });
-    expect(offMode.every((m) => m === 'disabled')).toBe(true);
+    expect(stateAfterOff1).not.toBeNull();
+    expect(stateAfterOff1!.allDisabled).toBe(true);
+    expect(stateAfterOff1!.currentTime).toBeGreaterThanOrEqual(5.0);
+    expect(stateAfterOff1!.paused).toBe(false);
+    expect(stateAfterOff1!.hlsCount).toBe(baselineState.hlsCount);
 
-    // 5. Select English subtitles
+    // 6. Select English subtitles
     await settingsButton.click();
     await page.getByRole('button', { name: 'English', exact: true }).click();
 
-    const enMode = await page.evaluate(() => {
+    const stateAfterEn = await page.evaluate(() => {
       const v = document.querySelector('video');
       if (!v || !v.textTracks) return null;
-      const tr = Array.from(v.textTracks).find((t) => t.label === 'English');
-      return tr ? tr.mode : null;
-    });
-    expect(enMode).toBe('showing');
-
-    // 6. Switch back to Russian: verify English track gets disabled and Russian is showing
-    await settingsButton.click();
-    await page.getByRole('button', { name: 'Русские', exact: true }).click();
-
-    const switchModes = await page.evaluate(() => {
-      const v = document.querySelector('video');
-      if (!v || !v.textTracks) return {};
-      const ru = Array.from(v.textTracks).find((t) => t.label === 'Русские');
       const en = Array.from(v.textTracks).find((t) => t.label === 'English');
-      return { ru: ru?.mode, en: en?.mode };
+      return {
+        enMode: en ? en.mode : null,
+        currentTime: v.currentTime,
+        paused: v.paused,
+        hlsCount: (window as any).__hlsInstanceCount || 1
+      };
     });
-    expect(switchModes.ru).toBe('showing');
-    expect(switchModes.en).toBe('disabled');
+    expect(stateAfterEn).not.toBeNull();
+    expect(stateAfterEn!.enMode).toBe('showing');
+    expect(stateAfterEn!.currentTime).toBeGreaterThanOrEqual(5.0);
+    expect(stateAfterEn!.paused).toBe(false);
+    expect(stateAfterEn!.hlsCount).toBe(baselineState.hlsCount);
 
-    // 7. Final OFF
+    // 7. Turn OFF all subtitles
     await settingsButton.click();
     await page.getByRole('button', { name: 'Отключены', exact: true }).click();
 
-    const finalModes = await page.evaluate(() => {
+    const stateAfterOff2 = await page.evaluate(() => {
       const v = document.querySelector('video');
-      if (!v || !v.textTracks) return [];
-      return Array.from(v.textTracks).map((t) => t.mode);
+      if (!v || !v.textTracks) return null;
+      return {
+        allDisabled: Array.from(v.textTracks).every((t) => t.mode === 'disabled'),
+        currentTime: v.currentTime,
+        paused: v.paused,
+        hlsCount: (window as any).__hlsInstanceCount || 1
+      };
     });
-    expect(finalModes.every((m) => m === 'disabled')).toBe(true);
+    expect(stateAfterOff2).not.toBeNull();
+    expect(stateAfterOff2!.allDisabled).toBe(true);
+    expect(stateAfterOff2!.currentTime).toBeGreaterThanOrEqual(5.0);
+    expect(stateAfterOff2!.paused).toBe(false);
+    expect(stateAfterOff2!.hlsCount).toBe(baselineState.hlsCount);
+
+    // 8. Assert playback continues uninterrupted and no redundant manifests were fetched
+    await page.waitForTimeout(600);
+    const finalState = await page.evaluate(() => {
+      const v = document.querySelector('video');
+      return {
+        currentTime: v ? v.currentTime : 0,
+        paused: v ? v.paused : true,
+        hlsCount: (window as any).__hlsInstanceCount || 1
+      };
+    });
+    expect(finalState.currentTime).toBeGreaterThanOrEqual(5.5);
+    expect(finalState.paused).toBe(false);
+    expect(finalState.hlsCount).toBe(baselineState.hlsCount);
+    expect(manifestRequestsAfterStart).toBe(0);
   });
 
   test('UI /player-test: Loads real HLS video, plays, advances currentTime and performs seek without MediaError', async ({ page, browserName }) => {

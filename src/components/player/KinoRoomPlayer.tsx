@@ -85,6 +85,16 @@ export function KinoRoomPlayer({
   const [subtitleTracks, setSubtitleTracks] = useState<PlaybackSubtitle[]>(activeStream.subtitles || []);
   const [selectedSubtitleTrack, setSelectedSubtitleTrack] = useState<string>('off');
 
+  // Synchronized refs to decouple sub-systems from stream initialization lifecycle
+  const subtitleTracksRef = useRef<PlaybackSubtitle[]>(subtitleTracks);
+  subtitleTracksRef.current = subtitleTracks;
+
+  const selectedSubtitleTrackRef = useRef<string>(selectedSubtitleTrack);
+  selectedSubtitleTrackRef.current = selectedSubtitleTrack;
+
+  const autoPlayRef = useRef<boolean>(autoPlay);
+  autoPlayRef.current = autoPlay;
+
   const [qualityLevels, setQualityLevels] = useState<PlaybackQuality[]>(activeStream.qualities || []);
   const [selectedQuality, setSelectedQuality] = useState<number>(-1); // -1 = Auto
 
@@ -152,16 +162,24 @@ export function KinoRoomPlayer({
   };
 
   // Robust subtitle track application across Hls.js AND Native Safari WebKit
-  const applySubtitleTrackMode = useCallback(
-    (targetSubId: string) => {
-      const video = videoRef.current;
-      if (!video) return;
+  // Decoupled from stream lifecycle and memoized without state dependencies
+  const applySubtitleTrackMode = useCallback((targetSubId: string) => {
+    const video = videoRef.current;
+    if (!video) return;
 
-      // 1. HLS.js subtitles (MSE mode)
-      if (hlsRef.current) {
-        if (targetSubId === 'off') {
+    const currentSubtitles = subtitleTracksRef.current;
+    const targetSub = currentSubtitles.find((s) => s.id === targetSubId);
+
+    // 1. HLS.js subtitles (MSE mode)
+    if (hlsRef.current) {
+      if (targetSubId === 'off') {
+        hlsRef.current.subtitleTrack = -1;
+      } else {
+        // If this is an external VTT track with a URL, let HTML5 TextTrack handle it and disable in-manifest HLS subtitles
+        if (targetSub && targetSub.url && targetSub.url.length > 0) {
           hlsRef.current.subtitleTrack = -1;
         } else {
+          // In-manifest HLS track
           const numericId = parseInt(targetSubId, 10);
           if (!isNaN(numericId) && numericId >= 0) {
             hlsRef.current.subtitleTrack = numericId;
@@ -174,29 +192,39 @@ export function KinoRoomPlayer({
           }
         }
       }
+    }
 
-      // 2. HTML5 TextTrack mode (Native Safari HLS + HTML <track> elements)
-      if (video.textTracks && video.textTracks.length > 0) {
-        const targetSub = subtitleTracks.find((s) => s.id === targetSubId);
-
-        for (let i = 0; i < video.textTracks.length; i++) {
-          const tr = video.textTracks[i];
-          if (targetSubId === 'off' || !targetSub) {
+    // 2. HTML5 TextTrack mode (Native Safari HLS + HTML <track> elements)
+    if (video.textTracks && video.textTracks.length > 0) {
+      for (let i = 0; i < video.textTracks.length; i++) {
+        const tr = video.textTracks[i];
+        if (targetSubId === 'off' || !targetSub) {
+          tr.mode = 'disabled';
+        } else {
+          // When Hls.js is active and handling in-manifest subtitle track internally,
+          // ensure external text tracks don't collide.
+          if (hlsRef.current && (!targetSub.url || targetSub.url.length === 0)) {
             tr.mode = 'disabled';
-          } else {
-            const isMatch =
-              tr.id === targetSub.id ||
-              tr.label === targetSub.label ||
-              (Boolean(tr.language) && tr.language === targetSub.lang);
-            tr.mode = isMatch ? 'showing' : 'disabled';
+            continue;
           }
+
+          const isMatch =
+            tr.id === targetSub.id ||
+            tr.label === targetSub.label ||
+            (Boolean(tr.language) && tr.language === targetSub.lang);
+          tr.mode = isMatch ? 'showing' : 'disabled';
         }
       }
-    },
-    [subtitleTracks]
-  );
+    }
+  }, []);
+
+  // Dedicated Subtitle Application Effect (Decoupled from Stream Lifecycle)
+  useEffect(() => {
+    applySubtitleTrackMode(selectedSubtitleTrack);
+  }, [selectedSubtitleTrack, subtitleTracks, applySubtitleTrackMode]);
 
   // Setup stream (Hls.js or native HTML5 for Safari / MP4)
+  // DECOUPLED: depends STRICTLY on activeStream.url and activeStream.type!
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !activeStream.url) return;
@@ -210,6 +238,7 @@ export function KinoRoomPlayer({
     }
 
     const isHlsUrl = activeStream.url.includes('.m3u8') || activeStream.type === 'hls';
+    let cleanupSafariListener: (() => void) | null = null;
 
     if (isHlsUrl && Hls.isSupported()) {
       const hls = new Hls({
@@ -219,6 +248,11 @@ export function KinoRoomPlayer({
         capLevelToPlayerSize: true
       });
       hlsRef.current = hls;
+
+      if (typeof window !== 'undefined') {
+        (window as any).__hlsInstanceCount = ((window as any).__hlsInstanceCount || 0) + 1;
+        (window as any).__hlsInstance = hls;
+      }
 
       hls.loadSource(activeStream.url);
       hls.attachMedia(video);
@@ -241,9 +275,9 @@ export function KinoRoomPlayer({
           pendingSeekTimeRef.current = null;
         }
 
-        applySubtitleTrackMode(selectedSubtitleTrack);
+        applySubtitleTrackMode(selectedSubtitleTrackRef.current);
 
-        if (autoPlay) {
+        if (autoPlayRef.current) {
           video.play().catch(() => {});
         }
       });
@@ -278,7 +312,7 @@ export function KinoRoomPlayer({
             });
             return combined;
           });
-          applySubtitleTrackMode(selectedSubtitleTrack);
+          applySubtitleTrackMode(selectedSubtitleTrackRef.current);
         }
       });
 
@@ -309,27 +343,33 @@ export function KinoRoomPlayer({
 
       const onCanPlay = () => {
         setIsBuffering(false);
-        applySubtitleTrackMode(selectedSubtitleTrack);
+        applySubtitleTrackMode(selectedSubtitleTrackRef.current);
       };
       video.addEventListener('canplay', onCanPlay, { once: true });
+      cleanupSafariListener = () => {
+        video.removeEventListener('canplay', onCanPlay);
+      };
 
       if (pendingSeekTimeRef.current !== null) {
         video.currentTime = pendingSeekTimeRef.current;
         pendingSeekTimeRef.current = null;
       }
 
-      if (autoPlay) {
+      if (autoPlayRef.current) {
         video.play().catch(() => {});
       }
     }
 
     return () => {
+      if (cleanupSafariListener) {
+        cleanupSafariListener();
+      }
       if (hlsRef.current) {
         hlsRef.current.destroy();
         hlsRef.current = null;
       }
     };
-  }, [activeStream.url, activeStream.type, autoPlay, applySubtitleTrackMode, selectedSubtitleTrack]);
+  }, [activeStream.url, activeStream.type, applySubtitleTrackMode]);
 
   // Video playback listeners
   const handleTimeUpdate = () => {

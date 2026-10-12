@@ -1,18 +1,51 @@
-import { ExternalSourceItem, ExternalSourcesRequest } from './types';
+import { ExternalSourceItem, ExternalSourcesRequest, UnifiedProviderInfo } from './types';
 import { EXTERNAL_SOURCES_CONFIG } from './config';
 
 /**
  * EzVidAPI Experimental Adapter (https://ezvidapi.com/)
  *
  * Current Status:
- *  - Network test: Returns Cloudflare HTTP 502 Bad Gateway across all endpoints.
- *  - Legal status: Commercial movie rights and direct HLS conditions unverified.
- *  - Policy: Preserved in codebase but kept disabled with honest diagnostics. Direct HLS is strictly NOT connected.
+ *  - Network test: Cloudflare HTTP 502 Bad Gateway on all paths.
+ *  - Browser test: Shows blank/black screen due to 502 and X-Frame-Options: SAMEORIGIN.
+ *  - AvailabilityStatus: UNAVAILABLE
+ *  - PlaybackStatus: PLAYBACK_FAILED
  */
+export function getEzVidProviderInfo(request: ExternalSourcesRequest): UnifiedProviderInfo {
+  const { tmdbId, type, season = 1, episode = 1 } = request;
+  const isTv = type === 'tv';
+  const baseUrl = EXTERNAL_SOURCES_CONFIG.ezvid.baseUrl.replace(/\/+$/, '');
+  const embedUrl = isTv
+    ? `${baseUrl}/embed/tv/${encodeURIComponent(tmdbId)}/${encodeURIComponent(season)}/${encodeURIComponent(episode)}`
+    : `${baseUrl}/embed/movie/${encodeURIComponent(tmdbId)}`;
+
+  return {
+    id: 'ezvid',
+    name: 'EzVidAPI',
+    homepage: 'https://ezvidapi.com/',
+    supportedMediaTypes: ['movie', 'tv'],
+    requiresApiKey: false,
+    requiresPayment: false,
+    claimedAdFree: true,
+    verifiedAdFree: 'UNKNOWN',
+    availabilityStatus: 'UNAVAILABLE',
+    playbackStatus: 'PLAYBACK_FAILED',
+    supportedPlaybackMode: 'unsupported',
+    embedUrl,
+    availableLanguages: [],
+    availableSubtitles: [],
+    verifiedQuality: undefined,
+    lastCheckedAt: new Date().toISOString(),
+    errorReason: 'Сервер ezvidapi.com возвращает HTTP 502 Bad Gateway и X-Frame-Options: SAMEORIGIN (в браузере отображается черный экран).',
+    rightsStatus: 'Не подтверждено (сервер апстрима отключен)',
+    badge: 'HTTP 502 (Недоступен)',
+    description: 'Экспериментальный сервис EzVidAPI: заявлялся ad-free HLS, но сервер не функционирует (Cloudflare 502)',
+    diagnostics: 'Сетевой тест: HTTP 502 Bad Gateway. Браузер блокирует встраивание из-за ошибки шлюза. Настоящее видео не воспроизводится.'
+  };
+}
+
 export function getEzVidSources(request: ExternalSourcesRequest): ExternalSourceItem[] {
   const { tmdbId, type, season = 1, episode = 1 } = request;
 
-  // If explicitly disabled in configuration
   if (!EXTERNAL_SOURCES_CONFIG.ezvid.enabled) {
     return [
       {

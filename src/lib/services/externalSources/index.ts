@@ -7,9 +7,19 @@ import { getEzVidSources } from './ezvidAdapter';
 export * from './types';
 export * from './config';
 export * from './allowlist';
+export * from './registry';
+export * from './embedwaveAdapter';
+export * from './vidcoreAdapter';
+export * from './vidlinkAdapter';
+export * from './vidsrcHairAdapter';
+export * from './vixsrcAdapter';
+export * from './autoembedAdapter';
+export * from './ezvidAdapter';
+export * from './kodikAdapter';
+export * from './vidsrcAdapter';
 
 /**
- * Aggregates all external sources (Kodik, VidSrc, EzVidAPI) with safety allowlists and honest status.
+ * Aggregates legacy external sources with safety allowlists and honest status.
  */
 export async function getExternalSources(request: ExternalSourcesRequest): Promise<ExternalSourceItem[]> {
   if (!EXTERNAL_SOURCES_CONFIG.enabled) {

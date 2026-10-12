@@ -671,5 +671,64 @@ test.describe('KinoRoom Player & Playback API E2E', () => {
     await nativeTabBtn.click();
     await expect(page.locator('video')).toBeVisible();
   });
+
+  test('Step 2D Laboratory (/player-test/providers): 7 candidates cards, preset switching, clean unmounting and QA panel', async ({ page }) => {
+    await page.goto('/player-test/providers');
+
+    // 1. Check title and header
+    await expect(page.locator('h1:has-text("Анализ и ручная проверка")')).toBeVisible({ timeout: 10_000 });
+
+    // 2. Verify all 7 provider cards are present
+    const expectedProviders = [
+      { id: 'embedwave', name: 'EmbedWave' },
+      { id: 'vidcore', name: 'VidCore' },
+      { id: 'vidlink', name: 'VidLink' },
+      { id: 'vidsrc_hair', name: 'VidSrc.hair' },
+      { id: 'vixsrc', name: 'VixSrc' },
+      { id: 'autoembed', name: 'AutoEmbed' },
+      { id: 'ezvid', name: 'EzVidAPI' }
+    ];
+
+    await expect(page.locator('[data-testid="provider-card-embedwave"]')).toBeVisible({ timeout: 10_000 });
+
+    for (const p of expectedProviders) {
+      await expect(page.locator(`[data-testid="provider-card-${p.id}"]`)).toBeVisible();
+    }
+
+    // 3. Preset switching: click "Breaking Bad (TV S1:E1)"
+    const breakingBadBtn = page.locator('button:has-text("Breaking Bad")');
+    await breakingBadBtn.click();
+    await expect(page.locator('input[value="1396"]')).toBeVisible();
+
+    // 4. Iframe lifecycle & unmounting check:
+    // EmbedWave is active by default -> Breaking Bad TV embed mounts
+    const embedwaveIframe = page.locator('iframe[src*="embedwave.cc/embed/tv/1396/1/1"]');
+    await expect(embedwaveIframe).toBeVisible({ timeout: 5000 });
+
+    // Open VidLink player -> EmbedWave iframe unmounts, VidLink mounts
+    const vidlinkCard = page.locator('[data-testid="provider-card-vidlink"]');
+    const openVidlinkBtn = vidlinkCard.locator('button:has-text("Открыть плеер")');
+    await openVidlinkBtn.click();
+
+    await expect(embedwaveIframe).toHaveCount(0); // Clean unmount
+    const vidlinkIframe = page.locator('iframe[src*="vidlink.pro/tv/1396/1/1"]');
+    await expect(vidlinkIframe).toBeVisible({ timeout: 5000 });
+
+    // Switch to VidSrc.hair (UNAVAILABLE) -> VidLink unmounts, explicit error card shown
+    const vidsrcHairCard = page.locator('[data-testid="provider-card-vidsrc_hair"]');
+    const openHairBtn = vidsrcHairCard.locator('button:has-text("Открыть плеер")');
+    await openHairBtn.click();
+
+    await expect(vidlinkIframe).toHaveCount(0); // Clean unmount
+    await expect(page.locator('h4:has-text("VidSrc.hair: UNAVAILABLE")')).toBeVisible();
+    await expect(page.locator('text=DNS NXDOMAIN')).toBeVisible();
+
+    // 5. Manual QA Checklist panel interaction
+    await expect(page.locator('h3:has-text("Чеклист ручной проверки: VidSrc.hair")')).toBeVisible();
+
+    // 6. Copy results button exists
+    const copyBtn = page.locator('button:has-text("Скопировать все результаты")');
+    await expect(copyBtn).toBeVisible();
+  });
 });
 

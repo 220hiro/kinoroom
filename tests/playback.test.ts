@@ -619,6 +619,7 @@ test('External Sources: EzVidAPI adapter generates test embed route when enabled
   assert.equal(ezvidResults.length, 1);
   assert.equal(ezvidResults[0].adapter, 'ezvid');
   assert.equal(ezvidResults[0].status, 'available');
+  assert.equal(ezvidResults[0].badge, 'EzVidAPI');
   assert.equal(ezvidResults[0].iframeUrl, 'https://ezvidapi.com/embed/movie/10331');
 
   // When disabled
@@ -658,5 +659,123 @@ test('External Sources API: GET /api/playback/external-sources validates params 
   assert.ok(movieJson.sources.some((s: any) => s.adapter === 'vidsrc'));
   assert.ok(movieJson.sources.some((s: any) => s.adapter === 'kodik'));
   assert.ok(movieJson.sources.some((s: any) => s.adapter === 'ezvid'));
+});
+
+test('Step 2D: ExternalSourceRegistry registers all 7 candidates with unified schema and honest routes', async () => {
+  const { ExternalSourceRegistry, STEP_2D_PROVIDER_IDS } = await import('../src/lib/services/externalSources');
+
+  // 1. Verify exact 7 candidates
+  assert.equal(STEP_2D_PROVIDER_IDS.length, 7);
+  assert.deepEqual(STEP_2D_PROVIDER_IDS, [
+    'embedwave',
+    'vidcore',
+    'vidlink',
+    'vidsrc_hair',
+    'vixsrc',
+    'autoembed',
+    'ezvid'
+  ]);
+
+  // 2. Movie request (Fight Club TMDB 550)
+  const movieProviders = ExternalSourceRegistry.getStep2DProviders({
+    tmdbId: 550,
+    type: 'movie'
+  });
+  assert.equal(movieProviders.length, 7);
+
+  // EmbedWave
+  const embedwave = movieProviders.find((p) => p.id === 'embedwave')!;
+  assert.ok(embedwave);
+  assert.equal(embedwave.availabilityStatus, 'AVAILABLE');
+  assert.equal(embedwave.claimedAdFree, true);
+  assert.equal(embedwave.verifiedAdFree, 'CLAIMED_AD_FREE');
+  assert.equal(embedwave.embedUrl, 'https://embedwave.cc/embed/movie/550');
+
+  // VidCore
+  const vidcore = movieProviders.find((p) => p.id === 'vidcore')!;
+  assert.ok(vidcore);
+  assert.equal(vidcore.availabilityStatus, 'AVAILABLE');
+  assert.equal(vidcore.embedUrl, 'https://vidcore.org/embed/movie/550');
+
+  // VidLink
+  const vidlink = movieProviders.find((p) => p.id === 'vidlink')!;
+  assert.ok(vidlink);
+  assert.equal(vidlink.availabilityStatus, 'AVAILABLE');
+  assert.equal(vidlink.embedUrl, 'https://vidlink.pro/movie/550');
+
+  // VidSrc.hair (DNS down)
+  const vidsrcHair = movieProviders.find((p) => p.id === 'vidsrc_hair')!;
+  assert.ok(vidsrcHair);
+  assert.equal(vidsrcHair.availabilityStatus, 'UNAVAILABLE');
+  assert.equal(vidsrcHair.embedUrl, undefined);
+  assert.match(vidsrcHair.errorReason || '', /NXDOMAIN|не резолвится/);
+
+  // VixSrc
+  const vixsrc = movieProviders.find((p) => p.id === 'vixsrc')!;
+  assert.ok(vixsrc);
+  assert.equal(vixsrc.availabilityStatus, 'AVAILABLE');
+  assert.equal(vixsrc.embedUrl, 'https://vixsrc.to/movie/550');
+
+  // AutoEmbed (DNS down)
+  const autoembed = movieProviders.find((p) => p.id === 'autoembed')!;
+  assert.ok(autoembed);
+  assert.equal(autoembed.availabilityStatus, 'UNAVAILABLE');
+  assert.equal(autoembed.embedUrl, undefined);
+  assert.match(autoembed.errorReason || '', /NXDOMAIN|не резолвится/);
+
+  // EzVidAPI (502 Bad Gateway)
+  const ezvid = movieProviders.find((p) => p.id === 'ezvid')!;
+  assert.ok(ezvid);
+  assert.equal(ezvid.availabilityStatus, 'UNAVAILABLE');
+  assert.equal(ezvid.playbackStatus, 'PLAYBACK_FAILED');
+  assert.match(ezvid.errorReason || '', /502 Bad Gateway/);
+
+  // 3. TV Series request (Breaking Bad TMDB 1396 S1:E1)
+  const tvProviders = ExternalSourceRegistry.getStep2DProviders({
+    tmdbId: 1396,
+    type: 'tv',
+    season: 1,
+    episode: 1
+  });
+  const tvVidLink = tvProviders.find((p) => p.id === 'vidlink')!;
+  assert.equal(tvVidLink.embedUrl, 'https://vidlink.pro/tv/1396/1/1');
+  const tvEmbedWave = tvProviders.find((p) => p.id === 'embedwave')!;
+  assert.equal(tvEmbedWave.embedUrl, 'https://embedwave.cc/embed/tv/1396/1/1');
+  const tvVidCore = tvProviders.find((p) => p.id === 'vidcore')!;
+  assert.equal(tvVidCore.embedUrl, 'https://vidcore.org/embed/tv/1396/1/1');
+  const tvVixSrc = tvProviders.find((p) => p.id === 'vixsrc')!;
+  assert.equal(tvVixSrc.embedUrl, 'https://vixsrc.to/tv/1396/1/1');
+});
+
+test('Step 2D Providers API: GET /api/playback/providers validates input and returns unified candidate list', async () => {
+  const { GET } = await import('../src/app/api/playback/providers/route');
+  const { NextRequest } = await import('next/server');
+
+  // Missing tmdbId
+  const missingReq = new NextRequest('http://localhost:3000/api/playback/providers');
+  const missingRes = await GET(missingReq);
+  assert.equal(missingRes.status, 400);
+
+  // Invalid tmdbId
+  const invalidReq = new NextRequest('http://localhost:3000/api/playback/providers?tmdbId=-5');
+  const invalidRes = await GET(invalidReq);
+  assert.equal(invalidRes.status, 400);
+
+  // Valid movie request
+  const validReq = new NextRequest('http://localhost:3000/api/playback/providers?tmdbId=550&type=movie');
+  const validRes = await GET(validReq);
+  assert.equal(validRes.status, 200);
+  const json = await validRes.json();
+  assert.equal(json.success, true);
+  assert.equal(json.providers.length, 7);
+
+  // Single provider probe
+  const singleReq = new NextRequest('http://localhost:3000/api/playback/providers?tmdbId=550&type=movie&providerId=autoembed');
+  const singleRes = await GET(singleReq);
+  assert.equal(singleRes.status, 200);
+  const singleJson = await singleRes.json();
+  assert.equal(singleJson.success, true);
+  assert.equal(singleJson.provider.id, 'autoembed');
+  assert.equal(singleJson.provider.availabilityStatus, 'UNAVAILABLE');
 });
 

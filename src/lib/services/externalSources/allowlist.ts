@@ -4,6 +4,13 @@
  */
 
 export const TRUSTED_IFRAME_DOMAINS = [
+  'embedwave.cc',
+  'vidcore.org',
+  'vidlink.pro',
+  'vidsrc.hair',
+  'vixsrc.to',
+  'autoembed.cc',
+  'ezvidapi.com',
   'vidsrc.sh',
   'vidsrc.to',
   'vidsrc.xyz',
@@ -16,8 +23,7 @@ export const TRUSTED_IFRAME_DOMAINS = [
   'kodik.biz',
   'kodikonline.com',
   'aniqit.com',
-  'kinobox.tv',
-  'ezvidapi.com'
+  'kinobox.tv'
 ] as const;
 
 /**

@@ -191,13 +191,23 @@ export default function PlayerTestPage() {
               <span>Главная</span>
             </Link>
 
-            <button
-              onClick={() => loadStream(selectedDemoKey)}
-              className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>Перезагрузить</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <Link
+                href="/player-test/providers"
+                className="px-3 py-1.5 rounded-xl bg-red-600/20 hover:bg-red-600/30 text-red-300 border border-red-500/30 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-red-400" />
+                <span>Лаборатория 7 источников ➔</span>
+              </Link>
+
+              <button
+                onClick={() => loadStream(selectedDemoKey)}
+                className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Перезагрузить</span>
+              </button>
+            </div>
           </div>
 
           <div>

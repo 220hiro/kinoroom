@@ -570,6 +570,12 @@ export default function TitlePage({ params }: TitlePageProps) {
                       </button>
                     )}
                     <a
+                      href="/player-test/providers"
+                      className="px-3 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-300 border border-red-500/30 rounded-xl text-xs font-semibold transition-all"
+                    >
+                      Лаборатория 7 источников ➔
+                    </a>
+                    <a
                       href="/player-test"
                       className="px-3 py-2 bg-white/10 hover:bg-white/15 text-gray-300 hover:text-white rounded-xl text-xs font-semibold transition-all"
                     >

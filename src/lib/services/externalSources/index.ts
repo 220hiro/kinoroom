@@ -29,18 +29,7 @@ export async function getExternalSources(request: ExternalSourcesRequest): Promi
       }
     ]),
     Promise.resolve(getVidSrcSources(request)),
-    getEzVidSources(request).catch((e) => [
-      {
-        id: 'ezvid-error',
-        adapter: 'ezvid' as const,
-        name: 'EzVidAPI (Экспериментальный)',
-        type: 'direct_hls' as const,
-        status: 'error' as const,
-        isExperimental: true,
-        description: 'Экспериментальный сервис EzVidAPI',
-        diagnostics: `Ошибка адаптера: ${e?.message || 'Неизвестная ошибка'}`
-      }
-    ])
+    Promise.resolve(getEzVidSources(request))
   ]);
 
   return [...kodikResults, ...vidsrcResults, ...ezvidResults];

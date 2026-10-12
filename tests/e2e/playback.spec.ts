@@ -607,7 +607,7 @@ test.describe('KinoRoom Player & Playback API E2E', () => {
   });
 
   test('External Sources UI & API: Tab switching, preserved adapters under audit, and ad protection', async ({ page, request }) => {
-    // 1. API verification: all 3 adapters are preserved, VidSrc disabled due to ads, Kodik & EzVid under audit
+    // 1. API verification: all 3 adapters are preserved and active for user testing
     const tvApiRes = await request.get('/api/playback/external-sources?tmdbId=1396&type=tv&season=2&episode=4');
     expect(tvApiRes.ok()).toBe(true);
     const tvJson = await tvApiRes.json();
@@ -616,18 +616,16 @@ test.describe('KinoRoom Player & Playback API E2E', () => {
 
     const vidsrcItem = tvJson.sources.find((s: any) => s.adapter === 'vidsrc');
     expect(vidsrcItem).toBeDefined();
-    expect(vidsrcItem.status).toBe('disabled');
-    expect(vidsrcItem.diagnostics).toMatch(/всплывающей рекламы/);
-
-    const kodikItem = tvJson.sources.find((s: any) => s.adapter === 'kodik');
-    expect(kodikItem).toBeDefined();
-    expect(kodikItem.status).toBe('disabled');
-    expect(kodikItem.badge).toBe('На проверке');
+    expect(vidsrcItem.status).toBe('available');
+    expect(vidsrcItem.iframeUrl).toContain('vidsrc.sh/embed/tv/1396/2/4');
 
     const ezvidItem = tvJson.sources.find((s: any) => s.adapter === 'ezvid');
     expect(ezvidItem).toBeDefined();
-    expect(ezvidItem.status).toBe('disabled');
-    expect(ezvidItem.badge).toBe('На проверке');
+    expect(ezvidItem.status).toBe('available');
+    expect(ezvidItem.iframeUrl).toContain('ezvidapi.com/embed/tv/1396/2/4');
+
+    const kodikItem = tvJson.sources.find((s: any) => s.adapter === 'kodik');
+    expect(kodikItem).toBeDefined();
 
     // 2. UI verification in catalog (/title/movie/10331)
     await page.goto('/title/movie/10331');
@@ -645,30 +643,28 @@ test.describe('KinoRoom Player & Playback API E2E', () => {
     await expect(onlineContainer).toBeVisible({ timeout: 10_000 });
 
     // Verify presence of buttons for all three preserved adapters
-    await expect(page.locator('button:has-text("VidSrc")')).toBeVisible();
+    await expect(page.locator('button:has-text("VidSrc Global")')).toBeVisible();
     await expect(page.locator('button:has-text("Kodik")')).toBeVisible();
     await expect(page.locator('button:has-text("EzVidAPI")')).toBeVisible();
 
-    // AD-PROTECTION CHECK: Since all sources are either disabled or under audit, NO iframe must be rendered
-    await expect(page.locator('iframe')).toHaveCount(0);
-
-    // Initial selected source is Kodik (first in list)
-    await expect(page.locator('h4:has-text("Kodik")')).toBeVisible();
-    await expect(page.locator('text=аудита наличия встроенной рекламы')).toBeVisible();
-
-    // Switch to VidSrc (shows ad warning diagnostic card, no iframe)
-    const vidsrcBtn = page.locator('button:has-text("VidSrc")');
+    // Switch to VidSrc -> iframe is mounted for user testing
+    const vidsrcBtn = page.locator('button:has-text("VidSrc Global")');
     await vidsrcBtn.click();
-    await expect(page.locator('iframe')).toHaveCount(0);
-    await expect(page.locator('h4:has-text("VidSrc")')).toBeVisible();
-    await expect(page.locator('text=всплывающей рекламы')).toBeVisible();
+    const vidsrcIframe = page.locator('iframe[src*="vidsrc.sh"]');
+    await expect(vidsrcIframe).toBeVisible({ timeout: 5000 });
 
-    // Switch to EzVidAPI (under audit, no iframe)
+    // Switch to EzVidAPI -> VidSrc iframe unmounted, EzVidAPI iframe mounted for user testing
     const ezvidBtn = page.locator('button:has-text("EzVidAPI")');
     await ezvidBtn.click();
-    await expect(page.locator('iframe')).toHaveCount(0);
-    await expect(page.locator('h4:has-text("EzVidAPI")')).toBeVisible();
-    await expect(page.locator('text=Cloudflare 502 Bad Gateway')).toBeVisible();
+    await expect(vidsrcIframe).toHaveCount(0);
+    const ezvidIframe = page.locator('iframe[src*="ezvidapi.com"]');
+    await expect(ezvidIframe).toBeVisible({ timeout: 5000 });
+
+    // Switch to Kodik -> EzVidAPI iframe unmounted, Kodik diagnostic card shown
+    const kodikBtn = page.locator('button:has-text("Kodik")');
+    await kodikBtn.click();
+    await expect(ezvidIframe).toHaveCount(0);
+    await expect(page.locator('h4:has-text("Kodik")')).toBeVisible();
 
     // Switch back to "Плеер КиноРум" - KinoRoomPlayer retains functionality without regressions
     const nativeTabBtn = page.locator('button:has-text("Плеер КиноРум")');

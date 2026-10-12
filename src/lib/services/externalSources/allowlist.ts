@@ -12,8 +12,12 @@ export const TRUSTED_IFRAME_DOMAINS = [
   'vidsrc.net',
   'kodik.info',
   'kodikplayer.com',
+  'kodik.cc',
+  'kodik.biz',
+  'kodikonline.com',
   'aniqit.com',
-  'kinobox.tv'
+  'kinobox.tv',
+  'ezvidapi.com'
 ] as const;
 
 /**

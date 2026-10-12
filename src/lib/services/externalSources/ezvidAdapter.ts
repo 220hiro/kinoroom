@@ -9,15 +9,17 @@ import { EXTERNAL_SOURCES_CONFIG } from './config';
  *  - Legal status: Commercial movie rights and direct HLS conditions unverified.
  *  - Policy: Preserved in codebase but kept disabled with honest diagnostics. Direct HLS is strictly NOT connected.
  */
-export async function getEzVidSources(_request: ExternalSourcesRequest): Promise<ExternalSourceItem[]> {
-  // If explicitly disabled in configuration (default)
+export function getEzVidSources(request: ExternalSourcesRequest): ExternalSourceItem[] {
+  const { tmdbId, type, season = 1, episode = 1 } = request;
+
+  // If explicitly disabled in configuration
   if (!EXTERNAL_SOURCES_CONFIG.ezvid.enabled) {
     return [
       {
-        id: 'ezvid-testing',
+        id: 'ezvid-disabled',
         adapter: 'ezvid',
         name: 'EzVidAPI (На проверке)',
-        type: 'direct_hls',
+        type: 'iframe',
         status: 'disabled',
         badge: 'На проверке',
         isExperimental: true,
@@ -27,56 +29,31 @@ export async function getEzVidSources(_request: ExternalSourcesRequest): Promise
     ];
   }
 
-  // Live healthcheck if someone enables it via config
-  try {
-    const res = await fetch(EXTERNAL_SOURCES_CONFIG.ezvid.baseUrl, {
-      method: 'HEAD',
-      signal: AbortSignal.timeout(EXTERNAL_SOURCES_CONFIG.ezvid.timeoutMs)
-    });
-
-    if (!res.ok) {
-      return [
-        {
-          id: 'ezvid-down',
-          adapter: 'ezvid',
-          name: 'EzVidAPI (На проверке)',
-          type: 'direct_hls',
-          status: 'unavailable',
-          badge: 'HTTP 502',
-          isExperimental: true,
-          description: 'Экспериментальный сервис EzVidAPI',
-          diagnostics: `Сервер EzVidAPI вернул статус HTTP ${res.status}. Сервис нестабилен или недоступен.`
-        }
-      ];
-    }
-
-    return [
-      {
-        id: 'ezvid-unverified',
-        adapter: 'ezvid',
-        name: 'EzVidAPI (На проверке)',
-        type: 'direct_hls',
-        status: 'disabled',
-        badge: 'Проверка прав',
-        isExperimental: true,
-        description: 'EzVidAPI требует проверки условий лицензирования',
-        diagnostics:
-          'Сервис доступен, однако техническая совместимость и права на использование прямого HLS не подтверждены.'
-      }
-    ];
-  } catch (err: any) {
-    return [
-      {
-        id: 'ezvid-error',
-        adapter: 'ezvid',
-        name: 'EzVidAPI (На проверке)',
-        type: 'direct_hls',
-        status: 'unavailable',
-        badge: 'Сбой сети',
-        isExperimental: true,
-        description: 'Экспериментальный сервис EzVidAPI',
-        diagnostics: `Ошибка соединения с EzVidAPI: ${err?.message || 'Сервис не отвечает'}. Прямой HLS отключен.`
-      }
-    ];
+  if (!tmdbId) {
+    return [];
   }
+
+  const baseUrl = EXTERNAL_SOURCES_CONFIG.ezvid.baseUrl.replace(/\/+$/, '');
+  const isTv = type === 'tv';
+  const iframeUrl = isTv
+    ? `${baseUrl}/embed/tv/${encodeURIComponent(tmdbId)}/${encodeURIComponent(season)}/${encodeURIComponent(episode)}`
+    : `${baseUrl}/embed/movie/${encodeURIComponent(tmdbId)}`;
+
+  return [
+    {
+      id: isTv ? `ezvid-s${season}e${episode}` : 'ezvid-movie',
+      adapter: 'ezvid',
+      name: isTv ? `EzVidAPI (S${season}:E${episode})` : 'EzVidAPI Embed',
+      type: 'iframe',
+      status: 'available',
+      iframeUrl,
+      season: isTv ? season : undefined,
+      episode: isTv ? episode : undefined,
+      badge: 'EzVidAPI',
+      isExperimental: true,
+      description: 'Экспериментальный источник EzVidAPI (тестирование заявленного ad-free стриминга)',
+      diagnostics:
+        'EzVidAPI iframe для тестирования. Сервис может возвращать Cloudflare 502 Bad Gateway.'
+    }
+  ];
 }

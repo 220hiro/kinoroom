@@ -52,6 +52,37 @@ export async function getKodikSources(request: ExternalSourcesRequest): Promise<
     try {
       await throttleKodikRequest();
 
+      // 1. Direct Kodik API check if token is provided via environment or headers
+      const kodikToken = process.env.KODIK_API_TOKEN;
+      if (kodikToken) {
+        try {
+          const kodikUrl = `https://kodik-api.com/search?token=${encodeURIComponent(kodikToken)}&tmdb_id=${encodeURIComponent(tmdbId)}`;
+          const kRes = await fetch(kodikUrl, { signal: AbortSignal.timeout(EXTERNAL_SOURCES_CONFIG.kodik.timeoutMs) });
+          if (kRes.ok) {
+            const kData = await kRes.json();
+            if (Array.isArray(kData?.results) && kData.results.length > 0) {
+              return kData.results.map((item: any, i: number) => {
+                const link = item.link?.startsWith('//') ? `https:${item.link}` : item.link;
+                const translationName = item.translation?.title || undefined;
+                return {
+                  id: `kodik-${i + 1}`,
+                  adapter: 'kodik' as const,
+                  name: translationName ? `Kodik (${translationName})` : 'Kodik HD',
+                  type: 'iframe' as const,
+                  status: 'available' as const,
+                  iframeUrl: link,
+                  translationName,
+                  badge: 'Kodik',
+                  description: translationName ? `Озвучка: ${translationName}` : 'Оригинальный плеер Kodik'
+                };
+              });
+            }
+          }
+        } catch (tokenErr) {
+          console.warn('[KodikAdapter] Direct token query error:', tokenErr);
+        }
+      }
+
       const apiUrl = `${EXTERNAL_SOURCES_CONFIG.kodik.kinoboxApiUrl}?tmdb=${encodeURIComponent(tmdbId)}&sources=kodik`;
 
       // Use redirect: 'manual' to prevent downloading Selectel 1GB speedtest redirect

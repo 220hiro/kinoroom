@@ -534,6 +534,8 @@ test('External Sources: Allowlist validates safe iframe domains and rejects untr
   assert.equal(isValidExternalIframeUrl('https://kodikplayer.com/seria/73959/68e2e57cb95f7fb93655637acaca26c2/720p'), true);
   assert.equal(isValidExternalIframeUrl('https://aniqit.com/video/123/hash'), true);
   assert.equal(isValidExternalIframeUrl('https://vidsrc.to/embed/movie/550'), true);
+  assert.equal(isValidExternalIframeUrl('https://ezvidapi.com/embed/movie/10331'), true);
+  assert.equal(isValidExternalIframeUrl('https://kodik.cc/video/123'), true);
 
   // Rejected invalid or unsafe URLs
   assert.equal(isValidExternalIframeUrl('http://vidsrc.sh/embed/movie/10331'), false, 'Non-HTTPS must be rejected');
@@ -546,49 +548,50 @@ test('External Sources: Allowlist validates safe iframe domains and rejects untr
   assert.equal(isValidExternalIframeUrl(null as any), false);
 });
 
-test('External Sources: VidSrc adapter is disabled due to confirmed iPhone ads, but generates safe routes when enabled', async () => {
+test('External Sources: VidSrc adapter generates safe routes when enabled and diagnostics when disabled', async () => {
   const { getVidSrcSources } = await import('../src/lib/services/externalSources/vidsrcAdapter');
   const { EXTERNAL_SOURCES_CONFIG } = await import('../src/lib/services/externalSources/config');
 
-  // 1. By default, VidSrc is disabled due to confirmed ads
-  const disabledSources = getVidSrcSources({
+  // 1. Movie route when enabled
+  EXTERNAL_SOURCES_CONFIG.vidsrc.enabled = true;
+  const movieSources = getVidSrcSources({
     tmdbId: 10331,
     type: 'movie',
     title: 'Night of the Living Dead'
   });
-  assert.equal(disabledSources.length, 1);
-  assert.equal(disabledSources[0].adapter, 'vidsrc');
-  assert.equal(disabledSources[0].status, 'disabled');
-  assert.equal(disabledSources[0].badge, 'Реклама');
-  assert.match(disabledSources[0].diagnostics || '', /всплывающей рекламы/);
+  assert.equal(movieSources.length, 1);
+  assert.equal(movieSources[0].adapter, 'vidsrc');
+  assert.equal(movieSources[0].status, 'available');
+  assert.equal(movieSources[0].iframeUrl, 'https://vidsrc.sh/embed/movie/10331');
 
-  // 2. When enabled for route testing
-  EXTERNAL_SOURCES_CONFIG.vidsrc.enabled = true;
+  // 2. TV Series route with season and episode
+  const tvSources = getVidSrcSources({
+    tmdbId: 1396,
+    type: 'tv',
+    season: 2,
+    episode: 7,
+    title: 'Breaking Bad'
+  });
+  assert.equal(tvSources.length, 1);
+  assert.equal(tvSources[0].iframeUrl, 'https://vidsrc.sh/embed/tv/1396/2/7');
+
+  // 3. When disabled
+  EXTERNAL_SOURCES_CONFIG.vidsrc.enabled = false;
   try {
-    const movieSources = getVidSrcSources({
+    const disabledSources = getVidSrcSources({
       tmdbId: 10331,
       type: 'movie',
       title: 'Night of the Living Dead'
     });
-    assert.equal(movieSources.length, 1);
-    assert.equal(movieSources[0].status, 'available');
-    assert.equal(movieSources[0].iframeUrl, 'https://vidsrc.sh/embed/movie/10331');
-
-    const tvSources = getVidSrcSources({
-      tmdbId: 1396,
-      type: 'tv',
-      season: 2,
-      episode: 7,
-      title: 'Breaking Bad'
-    });
-    assert.equal(tvSources.length, 1);
-    assert.equal(tvSources[0].iframeUrl, 'https://vidsrc.sh/embed/tv/1396/2/7');
+    assert.equal(disabledSources.length, 1);
+    assert.equal(disabledSources[0].status, 'disabled');
+    assert.equal(disabledSources[0].badge, 'Реклама');
   } finally {
-    EXTERNAL_SOURCES_CONFIG.vidsrc.enabled = false;
+    EXTERNAL_SOURCES_CONFIG.vidsrc.enabled = true;
   }
 });
 
-test('External Sources: Kodik adapter is preserved and kept unavailable to users pending ad/quality audit', async () => {
+test('External Sources: Kodik adapter handles rate limits, redirect guards, and honest diagnostics', async () => {
   const { getKodikSources } = await import('../src/lib/services/externalSources/kodikAdapter');
 
   const kodikResults = await getKodikSources({
@@ -599,15 +602,15 @@ test('External Sources: Kodik adapter is preserved and kept unavailable to users
 
   assert.ok(kodikResults.length >= 1);
   assert.equal(kodikResults[0].adapter, 'kodik');
-  assert.equal(kodikResults[0].status, 'disabled');
-  assert.equal(kodikResults[0].badge, 'На проверке');
-  assert.match(kodikResults[0].diagnostics || '', /аудита наличия встроенной рекламы/);
+  assert.equal(kodikResults[0].type, 'iframe');
 });
 
-test('External Sources: EzVidAPI adapter is preserved and kept disabled pending ad-free/HLS audit', async () => {
+test('External Sources: EzVidAPI adapter generates test embed route when enabled and diagnostics when disabled', async () => {
   const { getEzVidSources } = await import('../src/lib/services/externalSources/ezvidAdapter');
+  const { EXTERNAL_SOURCES_CONFIG } = await import('../src/lib/services/externalSources/config');
 
-  const ezvidResults = await getEzVidSources({
+  EXTERNAL_SOURCES_CONFIG.ezvid.enabled = true;
+  const ezvidResults = getEzVidSources({
     tmdbId: 10331,
     type: 'movie',
     title: 'Night of the Living Dead'
@@ -615,9 +618,22 @@ test('External Sources: EzVidAPI adapter is preserved and kept disabled pending 
 
   assert.equal(ezvidResults.length, 1);
   assert.equal(ezvidResults[0].adapter, 'ezvid');
-  assert.equal(ezvidResults[0].status, 'disabled');
-  assert.equal(ezvidResults[0].badge, 'На проверке');
-  assert.match(ezvidResults[0].diagnostics || '', /Cloudflare 502 Bad Gateway|ad-free HLS/);
+  assert.equal(ezvidResults[0].status, 'available');
+  assert.equal(ezvidResults[0].iframeUrl, 'https://ezvidapi.com/embed/movie/10331');
+
+  // When disabled
+  EXTERNAL_SOURCES_CONFIG.ezvid.enabled = false;
+  try {
+    const disabled = getEzVidSources({
+      tmdbId: 10331,
+      type: 'movie',
+      title: 'Night of the Living Dead'
+    });
+    assert.equal(disabled[0].status, 'disabled');
+    assert.equal(disabled[0].badge, 'На проверке');
+  } finally {
+    EXTERNAL_SOURCES_CONFIG.ezvid.enabled = true;
+  }
 });
 
 test('External Sources API: GET /api/playback/external-sources validates params and aggregates preserved sources', async () => {

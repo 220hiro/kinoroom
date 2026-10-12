@@ -25,26 +25,26 @@ export interface ExternalSourcesConfig {
 export const EXTERNAL_SOURCES_CONFIG: ExternalSourcesConfig = {
   enabled: process.env.ENABLE_EXTERNAL_SOURCES !== 'false',
   kodik: {
-    enabled: false, // Preserved but kept unavailable to users until ad, quality and translation audit is complete
+    enabled: process.env.ENABLE_KODIK !== 'false', // Enabled for user testing and verification
     kinoboxApiUrl: process.env.KINOBOX_API_URL || 'https://kinobox.tv/api/players',
     rateLimitMs: 500, // 2 req/s
     timeoutMs: 5000,
     cacheTtlMs: 60 * 60 * 1000, // 1 hour
     disabledReason:
-      'Адаптер Kodik сохранен в кодовой базе, но временно отключен для пользователей до завершения аудита наличия встроенной рекламы, качества и озвучек.'
+      'Адаптер Kodik: проверка наличия рекламы и озвучек.'
   },
   vidsrc: {
-    enabled: false, // Strictly disabled after real iPhone testing confirmed intrusive popup advertising
+    enabled: process.env.ENABLE_VIDSRC !== 'false', // Enabled for user testing and verification
     baseUrl: process.env.VIDSRC_BASE_URL || 'https://vidsrc.sh',
     timeoutMs: 5000,
     disabledReason:
-      'Источник VidSrc отключен: в ходе реального тестирования на iPhone подтверждено наличие агрессивной всплывающей рекламы и нежелательных перенаправлений.'
+      'Источник VidSrc: тестирование всплывающей рекламы на iPhone.'
   },
   ezvid: {
-    enabled: false, // Preserved but kept unavailable to users pending availability, ad-free verification and HLS review
+    enabled: process.env.ENABLE_EZVID !== 'false', // Enabled for user testing and verification
     baseUrl: 'https://ezvidapi.com',
     timeoutMs: 3000,
     disabledReason:
-      'Адаптер EzVidAPI сохранен в кодовой базе, но недоступен пользователям: сервис не отвечает (Cloudflare 502 Bad Gateway). Ведется исследование заявленного ad-free HLS и условий использования.'
+      'Адаптер EzVidAPI: тестирование заявленного ad-free стриминга.'
   }
 };

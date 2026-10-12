@@ -178,6 +178,100 @@ test('Subtitle Track switching simulation: ON (ru) -> OFF -> ON (en) -> other la
   assert.ok(mockTracks.every((t) => t.mode === 'disabled'), 'Finally all tracks disabled');
 });
 
+test('Real Tears of Steel Subtitles: Technical validation and dialogue synchronization', async () => {
+  const fs = await import('fs');
+  const path = await import('path');
+  const { parseVttCues, validateSubtitleCues, getActiveCues } = await import('../src/lib/playback/subtitles');
+
+  const enVtt = fs.readFileSync(path.join(process.cwd(), 'public/subtitles/subtitles-en.vtt'), 'utf8');
+  const ruVtt = fs.readFileSync(path.join(process.cwd(), 'public/subtitles/subtitles-ru.vtt'), 'utf8');
+
+  const enCues = parseVttCues(enVtt);
+  const ruCues = parseVttCues(ruVtt);
+
+  // Assert genuine full cue counts (76 cues, not 6 dummy cues)
+  assert.equal(enCues.length, 76, 'English WebVTT must contain all 76 full dialogue cues');
+  assert.equal(ruCues.length, 76, 'Russian WebVTT must contain all 76 full dialogue cues');
+
+  // Assert validation passes against movie duration 734s
+  const enVal = validateSubtitleCues(enCues, 734);
+  assert.equal(enVal.valid, true, `EN validation errors: ${enVal.errors.join('; ')}`);
+
+  const ruVal = validateSubtitleCues(ruCues, 734);
+  assert.equal(ruVal.valid, true, `RU validation errors: ${ruVal.errors.join('; ')}`);
+
+  // Assert dialogue correspondence at Start (00:00:23)
+  const startEn = getActiveCues(enCues, 23.5);
+  assert.equal(startEn.length, 1);
+  assert.match(startEn[0].text, /You're a jerk, Thom/);
+
+  const startRu = getActiveCues(ruCues, 23.5);
+  assert.equal(startRu.length, 1);
+  assert.match(startRu[0].text, /Ты придурок, Том/);
+
+  // Assert dialogue correspondence in Middle (00:05:00)
+  const midEn = getActiveCues(enCues, 300.0);
+  assert.equal(midEn.length, 1);
+  assert.match(midEn[0].text, /You're a jerk, Thom!/);
+
+  const midRu = getActiveCues(ruCues, 300.0);
+  assert.equal(midRu.length, 1);
+  assert.match(midRu[0].text, /Ты придурок, Том!/);
+
+  // Assert dialogue correspondence at End (00:09:23)
+  const endEn = getActiveCues(enCues, 563.0);
+  assert.equal(endEn.length, 1);
+  assert.match(endEn[0].text, /lesson to be learned/);
+
+  const endRu = getActiveCues(ruCues, 563.0);
+  assert.equal(endRu.length, 1);
+  assert.match(endRu[0].text, /урок всем нам/);
+
+  // Seek simulation: verify no ghost cues remain from previous time
+  // 1. At 563s (end of movie)
+  const cuesAtEnd = getActiveCues(enCues, 563.0);
+  assert.equal(cuesAtEnd.length, 1);
+  assert.match(cuesAtEnd[0].text, /lesson/);
+
+  // 2. Seek back to 10s (intro before dialogue)
+  const cuesAtIntro = getActiveCues(enCues, 10.0);
+  assert.equal(cuesAtIntro.length, 0, 'Before dialogue starts at 23s, active cues must be strictly empty');
+
+  // 3. Seek forward to 23.5s
+  const cuesAtFirstLine = getActiveCues(enCues, 23.5);
+  assert.equal(cuesAtFirstLine.length, 1);
+  assert.match(cuesAtFirstLine[0].text, /Thom/);
+});
+
+test('SRT to WebVTT conversion and offset handling', async () => {
+  const { convertSrtToVtt, parseVttCues } = await import('../src/lib/playback/subtitles');
+
+  const sampleSrt = `1
+00:00:01,000 --> 00:00:04,000
+First cue text
+
+2
+00:00:05,500 --> 00:00:08,200
+Second cue text
+`;
+
+  // Without offset
+  const vtt = convertSrtToVtt(sampleSrt);
+  assert.match(vtt, /^WEBVTT/);
+  assert.match(vtt, /00:00:01\.000 --> 00:00:04\.000/);
+
+  const cues = parseVttCues(vtt);
+  assert.equal(cues.length, 2);
+  assert.equal(cues[0].startTime, 1.0);
+  assert.equal(cues[0].endTime, 4.0);
+
+  // With +2.5s offset
+  const vttOffset = convertSrtToVtt(sampleSrt, 2.5);
+  const cuesOffset = parseVttCues(vttOffset);
+  assert.equal(cuesOffset[0].startTime, 3.5);
+  assert.equal(cuesOffset[0].endTime, 6.5);
+});
+
 test('Live CDN HLS Manifest Reachability Test', async () => {
   const sampleUrl = DEMO_MEDIA_LIBRARY['tears-of-steel'].streamMap['tos-orig-en'].url;
 

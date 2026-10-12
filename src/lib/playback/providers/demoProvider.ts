@@ -57,7 +57,11 @@ export const DEMO_MEDIA_LIBRARY: Record<string, DemoMediaItem> = {
             label: 'Русские',
             url: '/subtitles/subtitles-ru.vtt',
             format: 'vtt',
-            isDefault: false
+            isDefault: false,
+            sourceId: 'tears-of-steel',
+            releaseId: 'tos-vfx-open-2012-1080p',
+            duration: 734,
+            offset: 0
           },
           {
             id: 'sub-en',
@@ -65,7 +69,11 @@ export const DEMO_MEDIA_LIBRARY: Record<string, DemoMediaItem> = {
             label: 'English',
             url: '/subtitles/subtitles-en.vtt',
             format: 'vtt',
-            isDefault: false
+            isDefault: false,
+            sourceId: 'tears-of-steel',
+            releaseId: 'tos-vfx-open-2012-1080p',
+            duration: 734,
+            offset: 0
           }
         ]
       }

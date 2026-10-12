@@ -223,6 +223,48 @@ export function KinoRoomPlayer({
     applySubtitleTrackMode(selectedSubtitleTrack);
   }, [selectedSubtitleTrack, subtitleTracks, applySubtitleTrackMode]);
 
+  // Track synchronization & Safari auto-select suppression
+  // Ensures that tracks added asynchronously by the browser respect user selection (default: OFF)
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !video.textTracks) return;
+
+    const textTracks = video.textTracks;
+
+    const enforceMode = () => {
+      applySubtitleTrackMode(selectedSubtitleTrackRef.current);
+    };
+
+    const handleTrackAdded = (e: TrackEvent) => {
+      if (selectedSubtitleTrackRef.current === 'off') {
+        if (e.track) e.track.mode = 'disabled';
+      } else {
+        enforceMode();
+      }
+    };
+
+    const handleTrackChange = () => {
+      if (selectedSubtitleTrackRef.current === 'off') {
+        for (let i = 0; i < textTracks.length; i++) {
+          if (textTracks[i].mode !== 'disabled') {
+            textTracks[i].mode = 'disabled';
+          }
+        }
+      }
+    };
+
+    textTracks.addEventListener('addtrack', handleTrackAdded);
+    textTracks.addEventListener('change', handleTrackChange);
+
+    // Initial check
+    enforceMode();
+
+    return () => {
+      textTracks.removeEventListener('addtrack', handleTrackAdded);
+      textTracks.removeEventListener('change', handleTrackChange);
+    };
+  }, [applySubtitleTrackMode, activeStream.url]);
+
   // Setup stream (Hls.js or native HTML5 for Safari / MP4)
   // DECOUPLED: depends STRICTLY on activeStream.url and activeStream.type!
   useEffect(() => {
@@ -248,6 +290,7 @@ export function KinoRoomPlayer({
         capLevelToPlayerSize: true
       });
       hlsRef.current = hls;
+      hls.subtitleTrack = -1; // Explicitly OFF by default
 
       if (typeof window !== 'undefined') {
         (window as any).__hlsInstanceCount = ((window as any).__hlsInstanceCount || 0) + 1;
@@ -709,7 +752,6 @@ export function KinoRoomPlayer({
                 label={sub.label}
                 srcLang={sub.lang}
                 src={sub.url}
-                default={false}
               />
             ))}
         </video>

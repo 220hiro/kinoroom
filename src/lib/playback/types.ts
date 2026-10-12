@@ -32,6 +32,10 @@ export interface PlaybackSubtitle {
   url: string; // Direct link to .vtt file
   format: 'vtt' | 'srt';
   isDefault?: boolean;
+  sourceId?: string;       // Linked media/video ID
+  releaseId?: string;      // Specific release or version ID
+  duration?: number;       // Verified media duration in seconds
+  offset?: number;         // Individual sync offset in seconds
 }
 
 export interface PlaybackSource {

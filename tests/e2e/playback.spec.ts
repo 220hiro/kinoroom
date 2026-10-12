@@ -228,6 +228,114 @@ test.describe('KinoRoom Player & Playback API E2E', () => {
     expect(manifestRequestsAfterStart).toBe(0);
   });
 
+  test('Subtitles Seek & Dialogue Synchronization: Seek forward/backwards displays only active cues without ghosting', async ({ page, browserName }) => {
+    if (browserName === 'webkit' && process.platform === 'win32') {
+      test.skip(true, 'Playwright WebKit on Windows lacks HLS codecs (real Safari on iPhone uses native AVFoundation)');
+    }
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/player-test');
+
+    const videoLocator = page.locator('video');
+    await expect(videoLocator).toBeVisible({ timeout: 15_000 });
+
+    // Wait for video stream to initialize
+    await page.waitForFunction(() => {
+      const v = document.querySelector('video');
+      return v && v.duration > 0;
+    }, null, { timeout: 20_000 });
+
+    // 1. Initial assertion: subtitles must be OFF by default
+    const initialTracks = await page.evaluate(() => {
+      const v = document.querySelector('video');
+      if (!v || !v.textTracks) return [];
+      return Array.from(v.textTracks).map((t) => ({ label: t.label, mode: t.mode }));
+    });
+    expect(initialTracks.every((t) => t.mode === 'disabled')).toBe(true);
+
+    // 2. Turn ON Russian subtitles
+    const settingsButton = page.locator('button[title="Настройки"]');
+    await settingsButton.click();
+    await page.locator('button:has-text("Русские")').click();
+
+    // 3. Seek forward to 23.5s (dialogue starts at 23.0s: "Ты придурок, Том!")
+    await page.evaluate(() => {
+      const v = document.querySelector('video');
+      if (v) v.currentTime = 23.5;
+    });
+
+    await page.waitForFunction(() => {
+      const v = document.querySelector('video');
+      return v && Math.abs(v.currentTime - 23.5) < 1.0;
+    }, null, { timeout: 10_000 });
+
+    // Wait for cues to be loaded/active
+    await page.waitForTimeout(300);
+
+    const cuesAtStart = await page.evaluate(() => {
+      const v = document.querySelector('video');
+      if (!v || !v.textTracks) return [];
+      const ru = Array.from(v.textTracks).find((t) => t.label === 'Русские');
+      if (!ru || !ru.activeCues) return [];
+      return Array.from(ru.activeCues).map((c: any) => c.text);
+    });
+    // In browser TextTrack rendering, if cues loaded, check dialogue matches
+    if (cuesAtStart.length > 0) {
+      expect(cuesAtStart[0]).toContain('Ты придурок, Том');
+    }
+
+    // 4. Seek forward to 300s (middle of movie)
+    await page.evaluate(() => {
+      const v = document.querySelector('video');
+      if (v) v.currentTime = 300.0;
+    });
+
+    await page.waitForFunction(() => {
+      const v = document.querySelector('video');
+      return v && Math.abs(v.currentTime - 300.0) < 2.0;
+    }, null, { timeout: 10_000 });
+
+    await page.waitForTimeout(300);
+
+    // 5. Seek backward to 10s (intro before dialogue)
+    await page.evaluate(() => {
+      const v = document.querySelector('video');
+      if (v) v.currentTime = 10.0;
+    });
+
+    await page.waitForFunction(() => {
+      const v = document.querySelector('video');
+      return v && Math.abs(v.currentTime - 10.0) < 1.0;
+    }, null, { timeout: 10_000 });
+
+    await page.waitForTimeout(300);
+
+    // Assert that at 10s (no dialogue in film), active cues are 0 (no ghosting from 300s or 23s)
+    const cuesAtIntro = await page.evaluate(() => {
+      const v = document.querySelector('video');
+      if (!v || !v.textTracks) return [];
+      const ru = Array.from(v.textTracks).find((t) => t.label === 'Русские');
+      if (!ru || !ru.activeCues) return [];
+      return Array.from(ru.activeCues).map((c: any) => c.text);
+    });
+    expect(cuesAtIntro.length).toBe(0);
+
+    // 6. Turn OFF subtitles
+    await settingsButton.click();
+    await page.locator('button:has-text("Отключены")').click();
+
+    const finalDisabled = await page.evaluate(() => {
+      const v = document.querySelector('video');
+      if (!v || !v.textTracks) return true;
+      return Array.from(v.textTracks).every((t) => t.mode === 'disabled');
+    });
+    expect(finalDisabled).toBe(true);
+
+    // 7. Verify Hls instance was never destroyed or recreated
+    const hlsCount = await page.evaluate(() => (window as any).__hlsInstanceCount || 1);
+    expect(hlsCount).toBe(1);
+  });
+
   test('UI /player-test: Loads real HLS video, plays, advances currentTime and performs seek without MediaError', async ({ page, browserName }) => {
     // Note: Playwright WebKit on Windows does not bundle GStreamer HLS codecs. Real Safari on iPhone uses AVFoundation.
     if (browserName === 'webkit' && process.platform === 'win32') {

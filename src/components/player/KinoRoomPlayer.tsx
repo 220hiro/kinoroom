@@ -974,10 +974,17 @@ export function KinoRoomPlayer({
           onError={() => {
             const err = videoRef.current?.error;
             let msg = 'Ошибка воспроизведения видеопотока.';
-            if (err?.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
-              msg = 'Формат потока не поддерживается данным браузером.';
-            } else if (err?.code === MediaError.MEDIA_ERR_NETWORK) {
+            const code = err?.code;
+            if (code === 4) {
+              msg = 'Формат видеопотока не поддерживается данным браузером.';
+            } else if (code === 2) {
               msg = 'Сетевая ошибка при загрузке видео. Проверьте соединение.';
+            } else if (typeof MediaError !== 'undefined') {
+              if (code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
+                msg = 'Формат видеопотока не поддерживается данным браузером.';
+              } else if (code === MediaError.MEDIA_ERR_NETWORK) {
+                msg = 'Сетевая ошибка при загрузке видео. Проверьте соединение.';
+              }
             }
             setErrorMessage(msg);
             setIsBuffering(false);

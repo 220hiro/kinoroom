@@ -525,7 +525,7 @@ test.describe('KinoRoom Player & Playback API E2E', () => {
     await page.goto('/title/movie/969681');
 
     // The unavailable fallback container in native tab
-    const fallbackMessage = page.locator('text=Прямой открытый HLS-поток не обнаружен');
+    const fallbackMessage = page.locator('text=Прямой открытый медиапоток не обнаружен');
     await expect(fallbackMessage).toBeVisible({ timeout: 15_000 });
 
     // Video player should NOT be rendered
@@ -594,7 +594,7 @@ test.describe('KinoRoom Player & Playback API E2E', () => {
     await page.goto('/title/movie/86817');
 
     // The unavailable fallback container in native tab
-    const fallbackMessage = page.locator('text=Прямой открытый HLS-поток не обнаружен');
+    const fallbackMessage = page.locator('text=Прямой открытый медиапоток не обнаружен');
     await expect(fallbackMessage).toBeVisible({ timeout: 15_000 });
 
     // Video player should NOT be rendered

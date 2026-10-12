@@ -132,8 +132,8 @@ export default function TitlePage({ params }: TitlePageProps) {
         setPlaybackData(null);
         setPlaybackError(
           data.error === 'SOURCE_UNAVAILABLE' || data.code === 'SOURCE_UNAVAILABLE'
-            ? 'Для данного фильма в открытом доступе пока нет подтвержденного HLS-потока.'
-            : (data.error || 'Для данного тайтла пока нет подтвержденного HLS-потока в открытом доступе.')
+            ? 'Для данного фильма в открытом доступе пока нет подтвержденного медиапотока.'
+            : (data.error || 'Для данного тайтла пока нет подтвержденного медиапотока в открытом доступе.')
         );
       }
     } catch (e: any) {
@@ -554,9 +554,9 @@ export default function TitlePage({ params }: TitlePageProps) {
                     <Play className="w-6 h-6 fill-current ml-0.5" />
                   </div>
                   <div className="max-w-md space-y-1">
-                    <h4 className="text-white font-bold text-sm sm:text-base">Прямой открытый HLS-поток не обнаружен</h4>
+                    <h4 className="text-white font-bold text-sm sm:text-base">Прямой открытый медиапоток не обнаружен</h4>
                     <p className="text-gray-400 text-xs">
-                      {playbackError || 'Для данного фильма в открытом доступе пока нет подтвержденного HLS-потока без рекламы.'}
+                      {playbackError || 'Для данного фильма в открытом доступе пока нет подтвержденного медиапотока без рекламы.'}
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center justify-center gap-2 pt-1">

@@ -982,7 +982,7 @@ test('Step 2F: OpenSubtitlesProvider normalizes IMDb IDs, evaluates release comp
 
   // 3. Honest REQUIRES_KEY status when OPENSUBTITLES_API_KEY is not configured
   const savedKey = process.env.OPENSUBTITLES_API_KEY;
-  delete process.env.OPENSUBTITLES_API_KEY;
+  process.env.OPENSUBTITLES_API_KEY = '';
   try {
     const searchRes = await openSubtitlesProvider.searchRussianSubtitles({
       tmdbId: 550,
@@ -1232,7 +1232,7 @@ test('Step 2F: OpenSubtitlesProvider enforces SSRF protection, search & download
 
   // 2. Download without API key honestly reports REQUIRES_KEY
   const savedKey = process.env.OPENSUBTITLES_API_KEY;
-  delete process.env.OPENSUBTITLES_API_KEY;
+  process.env.OPENSUBTITLES_API_KEY = '';
   try {
     const dlRes = await openSubtitlesProvider.downloadSubtitle({ fileId: 99999 });
     assert.equal(dlRes.success, false);

@@ -751,6 +751,20 @@ test.describe('KinoRoom Player & Playback API E2E', () => {
       });
     });
 
+    await page.route('**/api/playback/subtitles/opensubtitles*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: false,
+          status: 'REQUIRES_KEY',
+          configured: false,
+          candidates: [],
+          message: 'Ручная загрузка тестируется отдельно'
+        })
+      });
+    });
+
     // Intercept direct cinesrc.st iframe with a controlled postMessage harness on origin https://cinesrc.st
     // This verifies real cross-origin postMessage validation (event.origin === 'https://cinesrc.st' & event.source === iframe.contentWindow)
     await page.route('https://cinesrc.st/embed/movie/550', async (route) => {

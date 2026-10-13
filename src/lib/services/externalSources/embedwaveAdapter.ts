@@ -32,6 +32,25 @@ export function buildEmbedWaveCinesrcUrl(request: ExternalSourcesRequest): strin
   return `${baseUrl}/embed/movie/${encodeURIComponent(tmdbId)}?server=${serverParam}`;
 }
 
+/**
+ * Builds the documented direct CineSrc embed URL (https://cinesrc.st/docs):
+ *  - Movie: https://cinesrc.st/embed/movie/{tmdbId}
+ *  - TV:    https://cinesrc.st/embed/tv/{tmdbId}?s={season}&e={episode}
+ *
+ * Used for the optional experimental Direct CineSrc mode in Step 2F because the
+ * intermediate EmbedWave wrapper does not forward `cinesrc:*` postMessage time events.
+ */
+export function buildDirectCineSrcUrl(request: ExternalSourcesRequest): string {
+  const { tmdbId, type, season = 1, episode = 1 } = request;
+  if (type === 'tv') {
+    const safeSeason = Math.max(1, Math.floor(Number(season) || 1));
+    const safeEpisode = Math.max(1, Math.floor(Number(episode) || 1));
+    return `https://cinesrc.st/embed/tv/${encodeURIComponent(tmdbId)}?s=${encodeURIComponent(safeSeason)}&e=${encodeURIComponent(safeEpisode)}`;
+  }
+
+  return `https://cinesrc.st/embed/movie/${encodeURIComponent(tmdbId)}`;
+}
+
 export function getEmbedWaveProviderInfo(request: ExternalSourcesRequest): UnifiedProviderInfo {
   const embedUrl = buildEmbedWaveCinesrcUrl(request);
   const isSafeUrl = isValidExternalIframeUrl(embedUrl);
@@ -50,7 +69,7 @@ export function getEmbedWaveProviderInfo(request: ExternalSourcesRequest): Unifi
     supportedPlaybackMode: 'iframe',
     embedUrl: isSafeUrl ? embedUrl : undefined,
     availableLanguages: ['Original (Русская озвучка не подтверждена)'],
-    availableSubtitles: ['Зависит от релиза'],
+    availableSubtitles: ['Зависит от релиза + внешние SRT/VTT в режиме прямого CineSrc'],
     verifiedQuality: undefined, // Качество не подтверждено
     lastCheckedAt: new Date().toISOString(),
     rightsStatus: 'Экспериментальный внешний источник (сторонний iframe)',
@@ -93,6 +112,11 @@ export function getEmbedWaveSources(request: ExternalSourcesRequest): ExternalSo
     season: safeSeason,
     episode: safeEpisode
   });
+  const directCineSrcUrl = buildDirectCineSrcUrl({
+    ...request,
+    season: safeSeason,
+    episode: safeEpisode
+  });
 
   if (!isValidExternalIframeUrl(iframeUrl)) {
     return [
@@ -118,6 +142,7 @@ export function getEmbedWaveSources(request: ExternalSourcesRequest): ExternalSo
       type: 'iframe',
       status: 'available',
       iframeUrl,
+      directCineSrcUrl: isValidExternalIframeUrl(directCineSrcUrl) ? directCineSrcUrl : undefined,
       season: isTv ? safeSeason : undefined,
       episode: isTv ? safeEpisode : undefined,
       badge: 'Экспериментальный',

@@ -73,6 +73,7 @@ export interface ExternalSourceItem {
   type: 'iframe' | 'direct_hls';
   status: ExternalSourceStatus;
   iframeUrl?: string;
+  directCineSrcUrl?: string;
   translationName?: string;
   declaredQuality?: string;
   season?: number;

@@ -715,4 +715,330 @@ test('Step 2E Providers API: GET /api/playback/providers validates input and ret
   assert.equal(singleJson.provider.embedUrl, 'https://embedwave.cc/embed/movie/550?server=cinesrc');
 });
 
+test('Step 2F: ExternalSubtitleEngine parses SRT/VTT, decodes UTF-8 & CP1251 Russian, strips XSS tags, and synchronizes cues at 10m/30m with offset -60..+60s', async () => {
+  const {
+    ExternalSubtitleEngine,
+    parseExternalSubtitles,
+    sanitizeSubtitleText,
+    decodeSubtitleBuffer
+  } = await import('../src/lib/playback/externalSubtitleEngine');
+
+  // 1. XSS sanitization test (must never allow HTML tags)
+  const dirtyText = `<script>alert("xss")</script><b>Первая строка</b>\n<img src=x onerror=alert(1)>Вторая строка <i>курсивом</i>`;
+  const cleanText = sanitizeSubtitleText(dirtyText);
+  assert.equal(cleanText.includes('<script'), false);
+  assert.equal(cleanText.includes('<img'), false);
+  assert.equal(cleanText.includes('<b>'), false);
+  assert.equal(cleanText.includes('<i>'), false);
+  assert.equal(cleanText, 'Первая строка\nВторая строка курсивом');
+
+  // 2. Windows-1251 (CP1251) Russian decoding fallback
+  // Bytes for "Привет, мир!" in Windows-1251: CF F0 E8 E2 E5 F2 2C 20 EC E8 F0 21
+  const cp1251Bytes = new Uint8Array([0xcf, 0xf0, 0xe8, 0xe2, 0xe5, 0xf2, 0x2c, 0x20, 0xec, 0xe8, 0xf0, 0x21]);
+  const decodedCp1251 = decodeSubtitleBuffer(cp1251Bytes.buffer);
+  assert.equal(decodedCp1251, 'Привет, мир!');
+
+  // 3. Parse SRT with multi-line Russian cues at 00:00:10, 00:10:00 (600s), and 00:30:00 (1800s) + invalid cue
+  const sampleSrt = `1
+00:00:10,000 --> 00:00:14,500
+<b>Первая</b> тестовая реплика в начале.
+Вторая строка диалога.
+
+2
+00:05:00,000 --> 00:04:50,000
+Некорректный таймкод (конец раньше начала — должен быть отброшен)
+
+3
+00:10:00,000 --> 00:10:05,000
+Тестовая реплика на 10-й минуте (600 секунд).
+
+4
+00:30:00,000 --> 00:30:06,000
+Тестовая реплика на 30-й минуте (1800 секунд).
+`;
+
+  const parsed = parseExternalSubtitles(sampleSrt, { fileName: 'test-ru.srt' });
+  assert.equal(parsed.valid, true);
+  assert.equal(parsed.format, 'srt');
+  assert.equal(parsed.cues.length, 3, 'Invalid cue with endTime < startTime must be filtered out');
+  assert.equal(parsed.cues[0].text, 'Первая тестовая реплика в начале.\nВторая строка диалога.');
+
+  // 4. Engine lifecycle: load, timeupdate, pause, seek (600s & 1800s), offset (-60..+60), ended
+  const engine = new ExternalSubtitleEngine();
+  const loadRes = engine.loadFromText(sampleSrt, {
+    fileName: 'test-ru.srt',
+    lang: 'ru',
+    label: 'Русские (тест)'
+  });
+  assert.equal(loadRes.valid, true);
+  assert.ok(engine.getTrack());
+  assert.equal(engine.getTrack()!.cueCount, 3);
+
+  // At 12s -> first cue is active (2 lines)
+  let active = engine.updatePlaybackTime(12.0, { isPaused: false });
+  assert.equal(active.length, 1);
+  assert.match(active[0].text, /Первая тестовая реплика/);
+  assert.deepEqual(engine.getActiveLines(), [
+    'Первая тестовая реплика в начале.',
+    'Вторая строка диалога.'
+  ]);
+
+  // Pause at 12.0s -> state is paused, cue remains at 12.0s without autonomous timer drift
+  active = engine.onPause(12.0);
+  assert.equal(engine.getIsPaused(), true);
+  assert.equal(engine.getCurrentTime(), 12.0);
+  assert.equal(active.length, 1);
+
+  // Seek to 10 minutes (600s) -> immediately switches to 10-minute cue without ghosting
+  active = engine.onSeek(601.5);
+  assert.equal(active.length, 1);
+  assert.equal(active[0].text, 'Тестовая реплика на 10-й минуте (600 секунд).');
+
+  // Seek to 30 minutes (1800s) -> immediately switches to 30-minute cue
+  active = engine.onSeek(1802.0);
+  assert.equal(active.length, 1);
+  assert.equal(active[0].text, 'Тестовая реплика на 30-й минуте (1800 секунд).');
+
+  // Delay adjustment (+5.0s shifts cue window later: at 1802s cue [1800..1806] shifted by +5 becomes [1805..1811])
+  const newOffset = engine.setOffsetSeconds(5.0);
+  assert.equal(newOffset, 5.0);
+  assert.equal(engine.getActiveCues().length, 0, 'At 1802s with +5s delay, cue starting at 1805s is not yet active');
+
+  active = engine.updatePlaybackTime(1806.0, { isPaused: false });
+  assert.equal(active.length, 1);
+  assert.equal(active[0].text, 'Тестовая реплика на 30-й минуте (1800 секунд).');
+
+  // Offset clamping to [-60, +60]
+  assert.equal(engine.setOffsetSeconds(120), 60);
+  assert.equal(engine.setOffsetSeconds(-95), -60);
+  engine.setOffsetSeconds(0);
+
+  // Ended clears active cues
+  active = engine.onEnded();
+  assert.equal(engine.getIsEnded(), true);
+  assert.equal(engine.getIsPaused(), true);
+  assert.equal(active.length, 0);
+});
+
+test('Step 2F: cinesrcBridge strictly validates origin, source window, activeIframeId, event type, and currentTime', async () => {
+  const { validateCineSrcMessageEvent } = await import('../src/lib/playback/cinesrcBridge');
+
+  const fakeIframeWindow = {} as Window;
+  const otherWindow = {} as Window;
+
+  // 1. Valid cinesrc:timeupdate event
+  const validRes = validateCineSrcMessageEvent(
+    {
+      origin: 'https://cinesrc.st',
+      source: fakeIframeWindow,
+      data: {
+        type: 'cinesrc:timeupdate',
+        currentTime: 600.25,
+        duration: 7984
+      }
+    },
+    {
+      expectedIframeWindow: fakeIframeWindow,
+      activeIframeId: 'cinesrc-direct-550',
+      currentIframeId: 'cinesrc-direct-550'
+    }
+  );
+  assert.ok(validRes);
+  assert.equal(validRes.type, 'cinesrc:timeupdate');
+  assert.equal(validRes.currentTime, 600.25);
+  assert.equal(validRes.duration, 7984);
+
+  // 2. Reject untrusted origin (including embedwave.cc or malicious domains)
+  const badOrigin = validateCineSrcMessageEvent(
+    {
+      origin: 'https://evil-site.com',
+      source: fakeIframeWindow,
+      data: { type: 'cinesrc:timeupdate', currentTime: 10 }
+    },
+    {
+      expectedIframeWindow: fakeIframeWindow,
+      activeIframeId: 'cinesrc-direct-550',
+      currentIframeId: 'cinesrc-direct-550'
+    }
+  );
+  assert.equal(badOrigin, null);
+
+  // 3. Reject mismatched event.source
+  const badSource = validateCineSrcMessageEvent(
+    {
+      origin: 'https://cinesrc.st',
+      source: otherWindow,
+      data: { type: 'cinesrc:timeupdate', currentTime: 10 }
+    },
+    {
+      expectedIframeWindow: fakeIframeWindow,
+      activeIframeId: 'cinesrc-direct-550',
+      currentIframeId: 'cinesrc-direct-550'
+    }
+  );
+  assert.equal(badSource, null);
+
+  // 4. Reject mismatched activeIframeId
+  const badIframeId = validateCineSrcMessageEvent(
+    {
+      origin: 'https://cinesrc.st',
+      source: fakeIframeWindow,
+      data: { type: 'cinesrc:timeupdate', currentTime: 10 }
+    },
+    {
+      expectedIframeWindow: fakeIframeWindow,
+      activeIframeId: 'cinesrc-direct-550',
+      currentIframeId: 'embedwave-wrapper-550'
+    }
+  );
+  assert.equal(badIframeId, null);
+
+  // 5. Reject negative or NaN currentTime
+  const negativeTime = validateCineSrcMessageEvent(
+    {
+      origin: 'https://cinesrc.st',
+      source: fakeIframeWindow,
+      data: { type: 'cinesrc:timeupdate', currentTime: -15 }
+    },
+    {
+      expectedIframeWindow: fakeIframeWindow,
+      activeIframeId: 'cinesrc-direct-550',
+      currentIframeId: 'cinesrc-direct-550'
+    }
+  );
+  assert.equal(negativeTime, null);
+
+  // 6. Valid cinesrc:response for getCurrentTime command
+  const cmdResponse = validateCineSrcMessageEvent(
+    {
+      origin: 'https://cinesrc.st',
+      source: fakeIframeWindow,
+      data: {
+        type: 'cinesrc:response',
+        id: 'cmd-1',
+        command: 'getCurrentTime',
+        result: 1800.5
+      }
+    },
+    {
+      expectedIframeWindow: fakeIframeWindow,
+      activeIframeId: 'cinesrc-direct-550',
+      currentIframeId: 'cinesrc-direct-550'
+    }
+  );
+  assert.ok(cmdResponse);
+  assert.equal(cmdResponse.currentTime, 1800.5);
+});
+
+test('Step 2F: OpenSubtitlesProvider normalizes IMDb IDs, evaluates release compatibility, and honestly reports REQUIRES_KEY without API key', async () => {
+  const {
+    normalizeImdbId,
+    evaluateSubtitleReleaseCompatibility,
+    openSubtitlesProvider
+  } = await import('../src/lib/services/openSubtitles');
+
+  // 1. IMDb ID normalization
+  assert.deepEqual(normalizeImdbId('tt0137523'), { canonical: 'tt0137523', numeric: 137523 });
+  assert.deepEqual(normalizeImdbId('0137523'), { canonical: 'tt0137523', numeric: 137523 });
+  assert.deepEqual(normalizeImdbId('137523'), { canonical: 'tt0137523', numeric: 137523 });
+  assert.equal(normalizeImdbId('invalid-id'), null);
+
+  // 2. Release compatibility check (BluRay theatrical vs Trailer/CamRip vs ID mismatch)
+  const goodMatch = evaluateSubtitleReleaseCompatibility({
+    release: 'Fight.Club.1999.1080p.BluRay.x264',
+    fileName: 'Fight.Club.1999.BDRip.ru.srt',
+    requestedType: 'movie',
+    requestedImdbNumeric: 137523,
+    requestedTmdbId: 550,
+    featureImdbId: 137523,
+    featureTmdbId: 550
+  });
+  assert.equal(goodMatch.isCompatible, true);
+  assert.equal(goodMatch.versionTag, 'BluRay / BDRip (Театральная)');
+
+  const trailerReject = evaluateSubtitleReleaseCompatibility({
+    release: 'Fight.Club.1999.Official.Trailer.HD',
+    fileName: 'Fight.Club.Trailer.ru.srt',
+    requestedType: 'movie',
+    requestedImdbNumeric: 137523,
+    requestedTmdbId: 550,
+    featureImdbId: 137523,
+    featureTmdbId: 550
+  });
+  assert.equal(trailerReject.isCompatible, false);
+  assert.equal(trailerReject.versionTag, 'Trailer / CamRip');
+
+  const wrongIdReject = evaluateSubtitleReleaseCompatibility({
+    release: 'Some.Other.Movie.1080p.WEB-DL',
+    fileName: 'Other.Movie.ru.srt',
+    requestedType: 'movie',
+    requestedImdbNumeric: 137523,
+    requestedTmdbId: 550,
+    featureImdbId: 999999,
+    featureTmdbId: 888888
+  });
+  assert.equal(wrongIdReject.isCompatible, false);
+  assert.equal(wrongIdReject.versionTag, 'Несовпадение ID');
+
+  // 3. Honest REQUIRES_KEY status when OPENSUBTITLES_API_KEY is not configured
+  const savedKey = process.env.OPENSUBTITLES_API_KEY;
+  delete process.env.OPENSUBTITLES_API_KEY;
+  try {
+    const searchRes = await openSubtitlesProvider.searchRussianSubtitles({
+      tmdbId: 550,
+      imdbId: 'tt0137523',
+      type: 'movie',
+      expectedDurationSeconds: 7984
+    });
+    assert.equal(searchRes.status, 'REQUIRES_KEY');
+    assert.equal(searchRes.configured, false);
+    assert.equal(searchRes.downloadAllowed, false);
+    assert.equal(searchRes.imdbId, 'tt0137523');
+    assert.equal(searchRes.candidates.length, 0, 'Must never fabricate OpenSubtitles results');
+
+    // 4. Verify API route /api/playback/subtitles/opensubtitles
+    const { GET } = await import('../src/app/api/playback/subtitles/opensubtitles/route');
+    const { NextRequest } = await import('next/server');
+
+    const badReq = new NextRequest('http://localhost:3000/api/playback/subtitles/opensubtitles');
+    const badRes = await GET(badReq);
+    assert.equal(badRes.status, 400);
+
+    const validReq = new NextRequest(
+      'http://localhost:3000/api/playback/subtitles/opensubtitles?tmdbId=550&imdbId=tt0137523&type=movie&expectedDuration=7984'
+    );
+    const validRes = await GET(validReq);
+    assert.equal(validRes.status, 200);
+    const validJson = await validRes.json();
+    assert.equal(validJson.status, 'REQUIRES_KEY');
+    assert.equal(validJson.configured, false);
+    assert.equal(validJson.imdbId, 'tt0137523');
+    assert.equal(validJson.candidates.length, 0);
+  } finally {
+    if (savedKey !== undefined) {
+      process.env.OPENSUBTITLES_API_KEY = savedKey;
+    }
+  }
+});
+
+test('Step 2F: Allowlist permits direct cinesrc.st and embedwaveAdapter provides directCineSrcUrl alongside default EmbedWave', async () => {
+  const { isValidExternalIframeUrl } = await import('../src/lib/services/externalSources/allowlist');
+  const { getEmbedWaveSources, buildDirectCineSrcUrl } = await import('../src/lib/services/externalSources/embedwaveAdapter');
+
+  assert.equal(isValidExternalIframeUrl('https://cinesrc.st/embed/movie/550'), true);
+  assert.equal(isValidExternalIframeUrl('https://cinesrc.st/embed/tv/1396?s=1&e=1'), true);
+  assert.equal(buildDirectCineSrcUrl({ tmdbId: 550, type: 'movie' }), 'https://cinesrc.st/embed/movie/550');
+  assert.equal(
+    buildDirectCineSrcUrl({ tmdbId: 1396, type: 'tv', season: 1, episode: 1 }),
+    'https://cinesrc.st/embed/tv/1396?s=1&e=1'
+  );
+
+  // Default source remains EmbedWave — Cinesrc, with directCineSrcUrl attached for experimental subtitle mode
+  const sources = getEmbedWaveSources({ tmdbId: 550, type: 'movie', title: 'Fight Club' });
+  assert.equal(sources.length, 1);
+  assert.equal(sources[0].iframeUrl, 'https://embedwave.cc/embed/movie/550?server=cinesrc');
+  assert.equal(sources[0].directCineSrcUrl, 'https://cinesrc.st/embed/movie/550');
+});
+
+
 

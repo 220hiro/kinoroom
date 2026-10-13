@@ -4,30 +4,27 @@ Updated: 2026-10-13
 
 ## Current goal
 
-Реализован Шаг 2E: Очистка видеоисточников и сохранение единственного перспективного экспериментального внешнего источника `EmbedWave — Cinesrc` (`?server=cinesrc`).
+Реализован Шаг 2F: Русские субтитры для CineSrc (синхронизированный оверлей поверх плеера, загрузка локальных `.srt` / `.vtt`, экспериментальный прямой режим `cinesrc.st` для получения событий `postMessage` и серверный адаптер `OpenSubtitles REST API v1`).
 
 ## Done
 
-- **Шаг 2E: Очистка источников и изоляция EmbedWave Cinesrc (`src/lib/services/externalSources/`)**:
-  - `embedwaveAdapter.ts`: Документированный выбор сервера `?server=cinesrc` (`https://embedwave.cc/embed/movie/{tmdbId}?server=cinesrc` и `https://embedwave.cc/embed/tv/{tmdbId}/{season}/{episode}?server=cinesrc`). Автоматический выбор `nxsha (Multi HD)` исключён.
-  - `allowlist.ts`: В `TRUSTED_IFRAME_DOMAINS` оставлен строго `embedwave.cc`. Все рекламные и неработающие домены (`vidsrc.sh`, `vidsrc.to`, `vidlink.pro`, `vidcore.org`, `vixsrc.to`, `ezvidapi.com`, `multiembed.mov`) исключены из allowlist.
-  - `index.ts`: Пользовательский агрегатор `getExternalSources` возвращает только `EmbedWave — Cinesrc`. Адаптер `kodikAdapter.ts` сохранён в кодовой базе в отключённом состоянии (`enabled: false`) без отображения в UI.
-  - Отклонённые адаптеры в реестре (`vidcoreAdapter.ts`, `vidlinkAdapter.ts`, `vixsrcAdapter.ts`, `ezvidAdapter.ts`, `vidsrcHairAdapter.ts`, `autoembedAdapter.ts`) переведены в `UNAVAILABLE` с `embedUrl: undefined` (отклонённые iframe не монтируются).
-  - `src/lib/services/onlineSources.ts` и `src/components/player/KinoboxPlayer.tsx`: очищены от старых рекламных ссылок (`multiembed`, `vidsrc.to`, `delivembid`) и автоматической загрузки сторонних скриптов.
-- **Упрощённый интерфейс (`src/components/player/OnlinePlayer.tsx`, `src/app/title/[type]/[id]/page.tsx`)**:
-  - Отображается единственная экспериментальная карточка **«EmbedWave — Cinesrc»** с плашкой «Экспериментальный» (без недоказанных плашек «1080p», «Русская озвучка», «Без рекламы»).
-  - Выведены честные характеристики:
-    * Воспроизведение фильма подтверждено на iPhone для тестового TMDB 550.
-    * Русская озвучка не подтверждена.
-    * Качество не подтверждено.
-    * Полное отсутствие рекламы не подтверждено.
-  - Добавлена кнопка «Сбросить на Cinesrc» и предупреждение о внутреннем меню серверов внутри iframe.
-  - Iframe изолирован атрибутом `sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-presentation"` (блокирует всплывающие окна и редиректы верхнего окна).
+- **Шаг 2F: Исследование совместимости `EmbedWave` vs `CineSrc` (`https://cinesrc.st/docs`)**:
+  - Подтверждено технически и в браузере Chromium: обёртка `embedwave.cc` встраивает `cinesrc.st` во вложенный iframe, а `cinesrc.st` отправляет `window.parent.postMessage(...)` только непосредственному родителю (`embedwave.cc`). Сама страница `embedwave.cc` не содержит ретранслятора `message` к `window.top`.
+  - В `OnlinePlayer.tsx` и `embedwaveAdapter.ts` сохранён режим по умолчанию `EmbedWave — Cinesrc` (`https://embedwave.cc/embed/movie/{tmdbId}?server=cinesrc`), и добавлен переключаемый экспериментальный режим **«Прямой CineSrc (Субтитры)»** (`https://cinesrc.st/embed/movie/{tmdbId}` и `https://cinesrc.st/embed/tv/{tmdbId}?s={season}&e={episode}`), напрямую передающий документированные события `cinesrc:ready`, `cinesrc:loadedmetadata`, `cinesrc:timeupdate`, `cinesrc:play`, `cinesrc:pause`, `cinesrc:seeking`, `cinesrc:seeked`, `cinesrc:ended` и поддерживающий команды `getCurrentTime`, `getDuration`, `seek`.
+- **Движок внешних субтитров (`src/lib/playback/externalSubtitleEngine.ts`, `src/lib/playback/cinesrcBridge.ts`)**:
+  - Переиспользует базовые утилиты `src/lib/playback/subtitles.ts`.
+  - Поддерживает `.srt` и `.vtt`, декодирование `UTF-8` и кириллической кодировки `Windows-1251 (CP1251)`, валидацию таймкодов (`startTime < endTime`), сортировку реплик, очистку HTML/XSS-тегов (`sanitizeSubtitleText`, рендеринг строго через текстовые узлы React без `innerHTML`), многострочный русский текст и сдвиг задержки от `-60` до `+60` сек.
+  - Строгая валидация `MessageEvent` в `cinesrcBridge.ts`: проверка `event.origin === 'https://cinesrc.st'`, `event.source === iframe.contentWindow`, `activeIframeId`, типа события и конечного неотрицательного `currentTime`. Автономные таймеры `Date.now()` не используются.
+- **Пользовательский интерфейс (`src/components/player/OnlinePlayer.tsx`)**:
+  - Кнопка и панель **«Субтитры»**: «Выключены», «Русские» (недоступна, пока файл не загружен), «Загрузить SRT/VTT» (100% локальное чтение в браузере, лимит 5 МБ), «Синхронизация +/−» (`-60..+60` сек), настройки размера и позиции, быстрые команды перемотки API CineSrc (`0:00`, `10:00`, `30:00`) и **«Режим Кинотеатр»** (полноэкранный CSS-режим с сохранением HTML-оверлея субтитров на iPhone Safari).
+- **Адаптер OpenSubtitles REST API v1 (`src/lib/services/openSubtitles.ts`, `src/app/api/playback/subtitles/opensubtitles/route.ts`)**:
+  - Использует современный `https://api.opensubtitles.com/api/v1` с сопоставлением по `IMDb ID` (из TMDB), `languages=ru`, проверкой сезона/серии и совместимости релиза (`evaluateSubtitleReleaseCompatibility`).
+  - Ключ `OPENSUBTITLES_API_KEY` хранится только на сервере. При отсутствии ключа система честно сообщает `REQUIRES_KEY` без подделки субтитров.
 - **Тесты (`tests/playback.test.ts`, `tests/e2e/playback.spec.ts`)**:
   - `npm run typecheck`: 0 ошибок.
-  - `npm test`: 25/25 unit-тестов пройдено.
-  - `npm run build`: 20 маршрутов успешно собраны.
-  - `npx playwright test --project=chromium`: 18/18 E2E-тестов пройдено (включая проверку Fight Club TMDB 550, Breaking Bad TMDB 1396 S01E01 и контроль отсутствия сетевых запросов к рекламным провайдерам).
+  - `npm test`: 29/29 unit-тестов пройдено.
+  - `npm run build`: 21 маршрут успешно собран.
+  - `npx playwright test --project=chromium`: 19/19 E2E-тестов пройдено.
 
 ## Branch
 

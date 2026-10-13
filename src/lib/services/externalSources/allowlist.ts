@@ -6,7 +6,8 @@
  */
 
 export const TRUSTED_IFRAME_DOMAINS = [
-  'embedwave.cc'
+  'embedwave.cc',
+  'cinesrc.st'
 ] as const;
 
 /**

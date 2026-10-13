@@ -734,6 +734,236 @@ test.describe('KinoRoom Player & Playback API E2E', () => {
     await expect(page.locator('h4:has-text("VidSrc.hair: UNAVAILABLE")')).toBeVisible();
     await expect(page.locator('text=DNS NXDOMAIN')).toBeVisible();
   });
+
+  test('Step 2F: Russian Subtitles for CineSrc (Fight Club TMDB 550) — upload SRT/VTT, start, pause, seek 10m/30m, track switch, delay offset, and player reset', async ({ page }) => {
+    // Intercept direct cinesrc.st iframe with a controlled postMessage harness on origin https://cinesrc.st
+    // This verifies real cross-origin postMessage validation (event.origin === 'https://cinesrc.st' & event.source === iframe.contentWindow)
+    await page.route('https://cinesrc.st/embed/movie/550', async (route) => {
+      const html = `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Controlled CineSrc Test Frame</title></head>
+<body style="background:#000;color:#fff;font-family:sans-serif;">
+  <div id="status">CineSrc Test Player Ready</div>
+  <script>
+    let currentTime = 0;
+    let duration = 7984;
+    let paused = true;
+
+    window.addEventListener('message', (e) => {
+      const d = e.data;
+      if (!d || typeof d !== 'object') return;
+      if (d.type === 'cinesrc:command') {
+        if (d.command === 'seek' && Array.isArray(d.args)) {
+          currentTime = Number(d.args[0]) || 0;
+          window.parent.postMessage({ type: 'cinesrc:seeking', currentTime, duration }, '*');
+          window.parent.postMessage({ type: 'cinesrc:seeked', currentTime, duration }, '*');
+          window.parent.postMessage({ type: 'cinesrc:timeupdate', currentTime, duration }, '*');
+        } else if (d.command === 'getCurrentTime') {
+          window.parent.postMessage({ type: 'cinesrc:response', id: d.id, command: 'getCurrentTime', result: currentTime }, '*');
+        } else if (d.command === 'getDuration') {
+          window.parent.postMessage({ type: 'cinesrc:response', id: d.id, command: 'getDuration', result: duration }, '*');
+        } else if (d.command === 'pause') {
+          paused = true;
+          window.parent.postMessage({ type: 'cinesrc:pause' }, '*');
+        } else if (d.command === 'play') {
+          paused = false;
+          window.parent.postMessage({ type: 'cinesrc:play' }, '*');
+        }
+      } else if (d.type === 'test:emit') {
+        if (typeof d.payload.currentTime === 'number') currentTime = d.payload.currentTime;
+        if (typeof d.payload.duration === 'number') duration = d.payload.duration;
+        window.parent.postMessage(d.payload, '*');
+      }
+    });
+
+    setTimeout(() => {
+      window.parent.postMessage({ type: 'cinesrc:sourceused', sourceId: 'Vidzy' }, '*');
+      window.parent.postMessage({ type: 'cinesrc:ready' }, '*');
+      window.parent.postMessage({ type: 'cinesrc:loadedmetadata', duration: 7984 }, '*');
+    }, 80);
+  </script>
+</body>
+</html>`;
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/html; charset=utf-8',
+        body: html
+      });
+    });
+
+    await page.goto('/title/movie/550');
+
+    // 1. Open "Онлайн-источники" tab and verify default remains EmbedWave — Cinesrc
+    const onlineTabBtn = page.locator('button:has-text("Онлайн-источники")');
+    await expect(onlineTabBtn).toBeVisible({ timeout: 10_000 });
+    await onlineTabBtn.click();
+
+    const defaultIframe = page.locator('iframe[src="https://embedwave.cc/embed/movie/550?server=cinesrc"]');
+    await expect(defaultIframe).toBeVisible({ timeout: 5000 });
+
+    // 2. Open «Субтитры» panel and verify honest initial state:
+    //    - «Русские (не загружены)» is disabled before any track is loaded
+    //    - Honest warning that EmbedWave wrapper does not forward cinesrc:timeupdate events
+    const subtitlesBtn = page.getByTestId('external-subtitles-button');
+    await subtitlesBtn.click();
+
+    const subtitlesPanel = page.getByTestId('external-subtitles-panel');
+    await expect(subtitlesPanel).toBeVisible();
+
+    const ruOptionBtn = page.getByTestId('subtitle-option-ru');
+    await expect(ruOptionBtn).toBeDisabled();
+    await expect(ruOptionBtn).toContainText('Русские (не загружены)');
+
+    const syncStatus = page.getByTestId('subtitle-sync-status');
+    await expect(syncStatus).toContainText('Автоматическая синхронизация недоступна через обёртку EmbedWave');
+
+    // 3. Switch to experimental «Прямой CineSrc (Субтитры)» mode
+    await page.getByTestId('mode-cinesrc-direct-btn').click();
+    const directIframe = page.locator('iframe[src="https://cinesrc.st/embed/movie/550"]');
+    await expect(directIframe).toBeVisible({ timeout: 5000 });
+
+    // Wait for cinesrc:ready & cinesrc:loadedmetadata from controlled frame
+    await expect(syncStatus).toContainText('Синхронизация с CineSrc активна', { timeout: 5000 });
+
+    // 4. Upload a short permitted test .srt file with known Russian cues at start (12s), 10m (600s), and 30m (1800s)
+    //    (Explicitly a synthetic test file, not claiming to be copyrighted Fight Club dialogue)
+    const permittedTestSrt = `1
+00:00:10,000 --> 00:00:16,000
+<script>window.__xssExecuted = true;</script>Тестовая русская реплика (старт воспроизведения).
+Вторая строка для проверки переноса.
+
+2
+00:10:00,000 --> 00:10:08,000
+Тестовая русская реплика на 10-й минуте (600 секунд).
+
+3
+00:30:00,000 --> 00:30:08,000
+Тестовая русская реплика на 30-й минуте (1800 секунд).
+`;
+
+    const fileInput = page.getByTestId('subtitle-file-input');
+    await fileInput.setInputFiles({
+      name: 'permitted-test-ru.srt',
+      mimeType: 'application/x-subrip',
+      buffer: Buffer.from(permittedTestSrt, 'utf-8')
+    });
+
+    await expect(ruOptionBtn).toBeEnabled();
+    await expect(ruOptionBtn).toContainText('Русские (3 реплик)');
+
+    // Helper to emit a controlled cinesrc:* event from inside the https://cinesrc.st iframe
+    const emitFromCineSrcIframe = async (payload: Record<string, unknown>) => {
+      await page.evaluate((pl) => {
+        const iframe = document.querySelector('iframe[src="https://cinesrc.st/embed/movie/550"]') as HTMLIFrameElement | null;
+        iframe?.contentWindow?.postMessage({ type: 'test:emit', payload: pl }, '*');
+      }, payload);
+    };
+
+    // 5. START playback & timeupdate at 12.5s
+    await emitFromCineSrcIframe({ type: 'cinesrc:play' });
+    await emitFromCineSrcIframe({ type: 'cinesrc:timeupdate', currentTime: 12.5, duration: 7984 });
+
+    const cueBox = page.getByTestId('external-subtitle-cue-box');
+    await expect(cueBox).toBeVisible();
+    await expect(page.getByTestId('external-subtitle-line-0')).toHaveText(
+      'Тестовая русская реплика (старт воспроизведения).'
+    );
+    await expect(page.getByTestId('external-subtitle-line-1')).toHaveText(
+      'Вторая строка для проверки переноса.'
+    );
+
+    // Verify XSS script was stripped and never executed
+    const xssExecuted = await page.evaluate(() => Boolean((window as any).__xssExecuted));
+    expect(xssExecuted).toBe(false);
+
+    // 6. PAUSE at 12.5s — verify state shows Пауза and time does not drift autonomously
+    await emitFromCineSrcIframe({ type: 'cinesrc:pause' });
+    await expect(syncStatus).toContainText('(Пауза)');
+    await page.waitForTimeout(500);
+    await expect(page.getByTestId('external-subtitle-line-0')).toHaveText(
+      'Тестовая русская реплика (старт воспроизведения).'
+    );
+
+    // 7. SEEK to 10 minutes (600s) using CineSrc command button
+    await page.getByTestId('cinesrc-seek-10m').click();
+    await expect(page.getByTestId('external-subtitle-line-0')).toHaveText(
+      'Тестовая русская реплика на 10-й минуте (600 секунд).'
+    );
+    await expect(page.getByTestId('external-subtitle-line-1')).toHaveCount(0);
+
+    // 8. SEEK to 30 minutes (1800s) using CineSrc command button
+    await page.getByTestId('cinesrc-seek-30m').click();
+    await expect(page.getByTestId('external-subtitle-line-0')).toHaveText(
+      'Тестовая русская реплика на 30-й минуте (1800 секунд).'
+    );
+
+    // 9. SUBTITLE DELAY OFFSET (+5.0s shifts [1800..1808] to [1805..1813], so at 1800s cue hides until 1806s)
+    await page.getByTestId('subtitle-offset-plus-5').click();
+    await expect(page.getByTestId('subtitle-offset-value')).toHaveText('+5.0 сек');
+    await expect(cueBox).toHaveCount(0);
+
+    await emitFromCineSrcIframe({ type: 'cinesrc:timeupdate', currentTime: 1806.0, duration: 7984 });
+    await expect(cueBox).toBeVisible();
+    await expect(page.getByTestId('external-subtitle-line-0')).toHaveText(
+      'Тестовая русская реплика на 30-й минуте (1800 секунд).'
+    );
+
+    // Reset offset back to 0.0s
+    await page.getByTestId('subtitle-offset-reset').click();
+    await expect(page.getByTestId('subtitle-offset-value')).toHaveText('0.0 сек');
+
+    // 10. SUBTITLE TRACK SWITCHING (upload second VTT track, switch between tracks, turn OFF and ON)
+    const secondPermittedVtt = `WEBVTT
+
+00:30:00.000 --> 00:30:10.000
+Альтернативная дорожка VTT на 30-й минуте.
+`;
+    await fileInput.setInputFiles({
+      name: 'permitted-alt-ru.vtt',
+      mimeType: 'text/vtt',
+      buffer: Buffer.from(secondPermittedVtt, 'utf-8')
+    });
+
+    await expect(page.getByTestId('external-subtitle-line-0')).toHaveText(
+      'Альтернативная дорожка VTT на 30-й минуте.'
+    );
+
+    // Switch back to first track (index 0)
+    await page.getByTestId('subtitle-track-item-0').click();
+    await expect(page.getByTestId('external-subtitle-line-0')).toHaveText(
+      'Тестовая русская реплика на 30-й минуте (1800 секунд).'
+    );
+
+    // Turn subtitles OFF -> overlay disappears
+    await page.getByTestId('subtitle-option-off').click();
+    await expect(cueBox).toHaveCount(0);
+
+    // Turn subtitles back ON -> overlay reappears immediately
+    await ruOptionBtn.click();
+    await expect(cueBox).toBeVisible();
+
+    // 11. CINEMA FULLSCREEN MODE (preserves HTML subtitle overlay for iPhone/Desktop)
+    await page.getByTestId('cinema-fullscreen-toggle').click();
+    await expect(page.getByTestId('exit-cinema-fullscreen-btn')).toBeVisible();
+    await expect(cueBox).toBeVisible();
+    await page.getByTestId('exit-cinema-fullscreen-btn').click();
+
+    // 12. RE-OPENING / RESETTING PLAYER («Сбросить на Cinesrc»)
+    await page.locator('button:has-text("Сбросить на Cinesrc")').click();
+    // Wait for new iframe instance to emit ready + timeupdate at 602s
+    await expect(syncStatus).toContainText('Синхронизация с CineSrc активна', { timeout: 5000 });
+    await emitFromCineSrcIframe({ type: 'cinesrc:timeupdate', currentTime: 602.0, duration: 7984 });
+    await expect(page.getByTestId('external-subtitle-line-0')).toHaveText(
+      'Тестовая русская реплика на 10-й минуте (600 секунд).'
+    );
+
+    // 13. Verify OpenSubtitles REST API v1 search button honestly reports status without fake subtitles
+    await page.getByTestId('opensubtitles-search-button').click();
+    const osBadge = page.getByTestId('opensubtitles-status-badge');
+    await expect(osBadge).toBeVisible({ timeout: 5000 });
+    await expect(osBadge).toHaveText('REQUIRES_KEY');
+  });
 });
+
 
 

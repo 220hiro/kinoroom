@@ -298,7 +298,7 @@ export default function TitlePage({ params }: TitlePageProps) {
       </div>
 
       {/* Main Details Card */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 -mt-40 relative z-10">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 -mt-40 relative">
         <div className="flex flex-col md:flex-row gap-8 items-start">
           {/* Poster */}
           <div className="w-52 sm:w-64 flex-shrink-0 rounded-2xl overflow-hidden shadow-2xl border border-white/10 bg-gray-900 glow-card">
@@ -592,6 +592,7 @@ export default function TitlePage({ params }: TitlePageProps) {
                 season={selectedSeason}
                 episode={selectedEpisode}
                 title={media.title}
+                runtimeMinutes={media.runtime}
               />
 
               {/* Fast switch promotion if torrents are available */}

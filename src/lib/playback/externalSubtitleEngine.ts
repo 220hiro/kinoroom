@@ -93,23 +93,65 @@ export function sanitizeSubtitleText(rawText: string): string {
   return lines.join('\n');
 }
 
-/**
- * Decodes an ArrayBuffer from a user-selected subtitle file.
- * Automatically tries strict UTF-8 first, then falls back to windows-1251 (CP1251)
- * so Cyrillic .srt files saved in ANSI/CP1251 render Russian letters properly.
- */
-export function decodeSubtitleBuffer(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
+import { unzipSync } from 'fflate';
 
-  // Strip UTF-8 BOM if present
+/**
+ * Decodes an ArrayBuffer from a subtitle file or ZIP archive.
+ * Bulletproof against mojibake ("кракозябры"):
+ *  1. Checks ZIP container (PK\x03\x04) and extracts primary .srt/.vtt file.
+ *  2. Strips UTF-8 BOM (0xEF 0xBB 0xBF).
+ *  3. Detects UTF-16LE BOM (0xFF 0xFE).
+ *  4. Detects UTF-16BE BOM (0xFE 0xFF).
+ *  5. Tries strict UTF-8 decoding.
+ *  6. Falls back to Windows-1251 (CP1251) for Cyrillic ANSI .srt files.
+ */
+export function decodeSubtitleBuffer(buffer: ArrayBuffer | Uint8Array): string {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  if (bytes.length === 0) return '';
+
+  // 1. ZIP Archive (magic bytes PK\x03\x04)
+  if (bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b) {
+    try {
+      const unzipped = unzipSync(bytes);
+      const names = Object.keys(unzipped).filter((k) => {
+        const lower = k.toLowerCase();
+        return !lower.includes('__macosx') && !lower.startsWith('.') && (lower.endsWith('.srt') || lower.endsWith('.vtt'));
+      });
+      if (names.length > 0) {
+        // Pick Russian-marked file if present or largest subtitle file
+        const ruPreferred = names.find((n) => {
+          const l = n.toLowerCase();
+          return l.includes('.ru.') || l.includes('russian') || l.includes('_ru_') || l.includes('rus');
+        });
+        const selected = ruPreferred || names.sort((a, b) => (unzipped[b]?.byteLength || 0) - (unzipped[a]?.byteLength || 0))[0];
+        return decodeSubtitleBuffer(unzipped[selected]);
+      }
+    } catch (err) {
+      console.warn('[decodeSubtitleBuffer] Failed to unzip archive:', err);
+    }
+  }
+
+  // 2. UTF-8 BOM
   if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
     return new TextDecoder('utf-8').decode(bytes.subarray(3));
   }
 
+  // 3. UTF-16LE BOM
+  if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) {
+    return new TextDecoder('utf-16le').decode(bytes.subarray(2));
+  }
+
+  // 4. UTF-16BE BOM
+  if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+    return new TextDecoder('utf-16be').decode(bytes.subarray(2));
+  }
+
+  // 5. Strict UTF-8
   try {
     const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
     return utf8Decoder.decode(bytes);
   } catch {
+    // 6. Windows-1251 (CP1251 Cyrillic)
     try {
       const cp1251Decoder = new TextDecoder('windows-1251');
       return cp1251Decoder.decode(bytes);

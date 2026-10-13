@@ -39,6 +39,10 @@ import type {
   OpenSubtitlesCandidate,
   OpenSubtitlesSearchResponse
 } from '@/lib/services/openSubtitles';
+import type {
+  SubDLCandidate,
+  SubDLSearchResponse
+} from '@/lib/services/subdl';
 
 interface OnlinePlayerProps {
   tmdbId: number;
@@ -80,7 +84,8 @@ function formatPlayerTime(seconds: number | null): string {
  *     (checking `event.origin`, `event.source`, `activeIframeId`, event type, and finite `currentTime`).
  *     Never uses `Date.now()` or autonomous timers during pause.
  *  4. Subtitle text is sanitized and rendered strictly as React text nodes (never `innerHTML`).
- *  5. If no Russian subtitles are loaded, «Русские» is never shown as available.
+ *  5. Automatically queries SubDL API v2 for matching Russian subtitles on mount, with release/version checks
+ *     and user preference persistence ('ru' / 'off' in localStorage).
  */
 export function OnlinePlayer({
   tmdbId,
@@ -117,6 +122,12 @@ export function OnlinePlayer({
   const [subtitlePosition, setSubtitlePosition] = useState<SubtitlePosition>('bottom');
   const [subtitleUploadError, setSubtitleUploadError] = useState<string | null>(null);
   const [subtitleWarnings, setSubtitleWarnings] = useState<string[]>([]);
+  const [isProvisionalTrack, setIsProvisionalTrack] = useState<boolean>(false);
+
+  // Step 2F: SubDL API v2 Automatic Subtitles state
+  const [subdlLoading, setSubdlLoading] = useState<boolean>(false);
+  const [subdlResponse, setSubdlResponse] = useState<SubDLSearchResponse | null>(null);
+  const [subdlDownloadingId, setSubdlDownloadingId] = useState<string | null>(null);
 
   // Step 2F: CineSrc postMessage Synchronization State
   const [syncState, setSyncState] = useState<SyncState>('wrapper_no_events');
@@ -202,6 +213,78 @@ export function OnlinePlayer({
       isCancelled = true;
     };
   }, [tmdbId, imdbId, type, season, episode, title]);
+
+  // Step 2F: SubDL API v2 Automatic Subtitle Search and Download
+  useEffect(() => {
+    let isCancelled = false;
+
+    async function autoFetchSubDL() {
+      setSubdlLoading(true);
+      try {
+        const params = new URLSearchParams({
+          tmdbId: String(tmdbId),
+          type,
+          season: String(season),
+          episode: String(episode),
+          autoDownload: 'true'
+        });
+        if (imdbId) params.append('imdbId', imdbId);
+
+        const res = await fetch(`/api/playback/subtitles/subdl?${params.toString()}`);
+        if (!res.ok) {
+          throw new Error(`Ошибка SubDL API (HTTP ${res.status})`);
+        }
+
+        const data: SubDLSearchResponse = await res.json();
+        if (isCancelled) return;
+        setSubdlResponse(data);
+
+        // If an auto-loaded subtitle is returned, hydrate engine and respect user preference
+        if (data.autoLoadedSubtitle && data.autoLoadedSubtitle.content) {
+          const autoSub = data.autoLoadedSubtitle;
+          const parseResult = engineRef.current.loadFromText(autoSub.content, {
+            fileName: autoSub.fileName,
+            label: `Русские (${autoSub.fileName})`,
+            lang: 'ru'
+          });
+
+          if (parseResult.valid && parseResult.track) {
+            setLoadedTracks([parseResult.track]);
+            setActiveTrackIndex(0);
+            setIsProvisionalTrack(autoSub.isProvisional);
+            setSubtitleWarnings(autoSub.warnings || []);
+
+            // Check saved user preference (defaults to 'ru' unless explicitly turned 'off')
+            const savedPref = typeof window !== 'undefined' ? localStorage.getItem('kinoroom_subtitle_pref') : null;
+            if (savedPref !== 'off') {
+              setSubtitleSelection('ru');
+            } else {
+              setSubtitleSelection('off');
+            }
+
+            if (currentTime !== null) {
+              engineRef.current.updatePlaybackTime(currentTime, { isPaused });
+            }
+            setActiveLines(engineRef.current.getActiveLines());
+          }
+        }
+      } catch (err: any) {
+        if (!isCancelled) {
+          console.warn('[OnlinePlayer] SubDL auto-search error:', err);
+        }
+      } finally {
+        if (!isCancelled) {
+          setSubdlLoading(false);
+        }
+      }
+    }
+
+    autoFetchSubDL();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [tmdbId, imdbId, type, season, episode]);
 
   // Reset playback synchronization state when iframe reloads or mode/title changes
   useEffect(() => {
@@ -482,6 +565,100 @@ export function OnlinePlayer({
     }
   };
 
+  // Step 2F: Refresh SubDL subtitles catalog
+  const handleRefreshSubDL = async () => {
+    setSubdlLoading(true);
+    setSubtitleUploadError(null);
+    try {
+      const params = new URLSearchParams({
+        tmdbId: String(tmdbId),
+        type,
+        season: String(season),
+        episode: String(episode),
+        autoDownload: 'false'
+      });
+      if (imdbId) params.append('imdbId', imdbId);
+
+      const res = await fetch(`/api/playback/subtitles/subdl?${params.toString()}`);
+      const data: SubDLSearchResponse = await res.json();
+      setSubdlResponse(data);
+    } catch (err: any) {
+      setSubdlResponse({
+        success: false,
+        status: 'UNAVAILABLE',
+        configured: false,
+        apiEndpoint: 'https://api.subdl.com/api/v2/subtitles/search',
+        tmdbId,
+        imdbId,
+        mediaType: type,
+        candidates: [],
+        message: err?.message || 'Не удалось выполнить запрос к SubDL API.'
+      });
+    } finally {
+      setSubdlLoading(false);
+    }
+  };
+
+  // Step 2F: Select and download a specific candidate version from SubDL
+  const handleSelectSubDLCandidate = async (candidate: SubDLCandidate) => {
+    setSubdlDownloadingId(candidate.id);
+    setSubtitleUploadError(null);
+    try {
+      const res = await fetch('/api/playback/subtitles/subdl', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subtitleId: candidate.id,
+          downloadUrl: candidate.downloadUrl || candidate.url,
+          tmdbId,
+          type,
+          season,
+          episode,
+          expectedDurationSeconds: duration || (runtimeMinutes ? runtimeMinutes * 60 : undefined)
+        })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success || !data.content) {
+        setSubtitleUploadError(data.message || 'Не удалось загрузить выбранные субтитры из SubDL.');
+        return;
+      }
+
+      const parseResult = engineRef.current.loadFromText(data.content, {
+        fileName: data.fileName || candidate.name,
+        label: `Русские (${candidate.releaseName || candidate.name})`,
+        lang: 'ru'
+      });
+
+      if (!parseResult.valid || !parseResult.track) {
+        setSubtitleUploadError(parseResult.errors.join(' ') || 'Ошибка валидации субтитров.');
+        return;
+      }
+
+      engineRef.current.setOffsetSeconds(subtitleOffset);
+      if (currentTime !== null) {
+        engineRef.current.updatePlaybackTime(currentTime, { isPaused });
+      }
+
+      const newTrack = parseResult.track;
+      setLoadedTracks((prev) => {
+        const filtered = prev.filter((t) => t.fileName !== newTrack.fileName);
+        return [newTrack, ...filtered];
+      });
+      setActiveTrackIndex(0);
+      setIsProvisionalTrack(candidate.isProvisional);
+      setSubtitleSelection('ru');
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('kinoroom_subtitle_pref', 'ru');
+      }
+      setSubtitleWarnings(parseResult.warnings);
+      setActiveLines(engineRef.current.getActiveLines());
+    } catch (err: any) {
+      setSubtitleUploadError(err?.message || 'Ошибка загрузки выбранных субтитров.');
+    } finally {
+      setSubdlDownloadingId(null);
+    }
+  };
+
   // OpenSubtitles REST API v1 search
   const handleSearchOpenSubtitles = async () => {
     setOsLoading(true);
@@ -719,6 +896,15 @@ export function OnlinePlayer({
                   RU
                 </span>
               )}
+              {isProvisionalTrack && subtitleSelection === 'ru' && hasLoadedRussianSubtitles && (
+                <span
+                  data-testid="subtitle-provisional-badge"
+                  className="px-1.5 py-0.2 rounded bg-amber-500/30 text-[10px] text-amber-300 font-semibold"
+                  title="Версия релиза предварительная — синхронизация требует проверки"
+                >
+                  Предв.
+                </span>
+              )}
             </button>
 
             {/* Cinema Fullscreen Toggle (keeps HTML subtitle overlay visible on iPhone & Desktop) */}
@@ -879,7 +1065,12 @@ export function OnlinePlayer({
                 <button
                   type="button"
                   data-testid="subtitle-option-off"
-                  onClick={() => setSubtitleSelection('off')}
+                  onClick={() => {
+                    setSubtitleSelection('off');
+                    if (typeof window !== 'undefined') {
+                      localStorage.setItem('kinoroom_subtitle_pref', 'off');
+                    }
+                  }}
                   className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
                     subtitleSelection === 'off'
                       ? 'bg-red-600 text-white border-red-500 shadow'
@@ -897,6 +1088,9 @@ export function OnlinePlayer({
                   onClick={() => {
                     if (hasLoadedRussianSubtitles) {
                       setSubtitleSelection('ru');
+                      if (typeof window !== 'undefined') {
+                        localStorage.setItem('kinoroom_subtitle_pref', 'ru');
+                      }
                     }
                   }}
                   className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all ${
@@ -908,7 +1102,7 @@ export function OnlinePlayer({
                   }`}
                 >
                   {hasLoadedRussianSubtitles
-                    ? `Русские (${activeTrack?.cueCount || 0} реплик)`
+                    ? `Русские (${activeTrack?.cueCount || 0} реплик)${isProvisionalTrack ? ' [Предв.]' : ''}`
                     : 'Русские (не загружены)'}
                 </button>
 
@@ -919,7 +1113,7 @@ export function OnlinePlayer({
                   className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-white border border-white/15 text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
                 >
                   <Upload className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Загрузить SRT/VTT</span>
+                  <span>Загрузить вручную</span>
                 </button>
               </div>
 
@@ -1149,7 +1343,115 @@ export function OnlinePlayer({
             </div>
           </div>
 
-          {/* 4. OpenSubtitles REST API v1 Automatic Search Section */}
+          {/* 4. SubDL API v2 Automatic Russian Subtitles Section */}
+          <div
+            data-testid="subdl-section"
+            className="pt-3 border-t border-white/10 space-y-2.5"
+          >
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <h5 className="text-xs font-bold text-gray-200">
+                  Автоматические русские субтитры (SubDL API v2)
+                </h5>
+                <p className="text-[11px] text-gray-400">
+                  Поиск по TMDB ID ({tmdbId}){type === 'tv' ? ` (S${season}E${episode})` : ''}, авто-распаковка ZIP и синхронизация
+                </p>
+              </div>
+              <button
+                type="button"
+                data-testid="subdl-refresh-button"
+                onClick={handleRefreshSubDL}
+                disabled={subdlLoading}
+                className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-white border border-white/15 text-xs font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-50 self-start sm:self-auto"
+              >
+                {subdlLoading ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="w-3.5 h-3.5" />
+                )}
+                <span>Обновить в SubDL</span>
+              </button>
+            </div>
+
+            {subdlResponse && (
+              <div
+                data-testid="subdl-status-box"
+                className="p-3 rounded-xl bg-black/30 border border-white/10 text-xs space-y-2"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-gray-300">{subdlResponse.message}</span>
+                  <span
+                    data-testid="subdl-status-badge"
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                      subdlResponse.status === 'CONNECTED'
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                        : subdlResponse.status === 'REQUIRES_KEY'
+                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                        : 'bg-red-500/20 text-red-300 border border-red-500/30'
+                    }`}
+                  >
+                    {subdlResponse.status}
+                  </span>
+                </div>
+
+                {subdlResponse.candidates.length > 0 && (
+                  <div
+                    data-testid="subdl-candidates-list"
+                    className="space-y-1.5 max-h-56 overflow-y-auto pt-1"
+                  >
+                    {subdlResponse.candidates.map((cand, idx) => (
+                      <div
+                        key={cand.id || idx}
+                        data-testid={`subdl-candidate-${idx}`}
+                        className="p-2 rounded-lg bg-white/5 border border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                      >
+                        <div className="space-y-0.5 min-w-0">
+                          <div className="font-semibold text-white truncate flex items-center gap-2">
+                            <span>{cand.releaseName || cand.name}</span>
+                            {cand.isProvisional && (
+                              <span
+                                data-testid={`subdl-candidate-provisional-${idx}`}
+                                className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 text-[10px] border border-amber-500/30 shrink-0 font-normal"
+                              >
+                                Предварительная
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-gray-400 flex flex-wrap items-center gap-2">
+                            <span
+                              className={
+                                cand.isCompatibleVersion && !cand.isProvisional
+                                  ? 'text-emerald-400 font-medium'
+                                  : 'text-amber-400 font-medium'
+                              }
+                            >
+                              {cand.versionTag}
+                            </span>
+                            {cand.fps && <span>{cand.fps} FPS</span>}
+                            {cand.downloads !== undefined && (
+                              <span>{cand.downloads} скачиваний</span>
+                            )}
+                            <span className="text-gray-400">{cand.compatibilityNote}</span>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          data-testid={`subdl-candidate-select-btn-${idx}`}
+                          disabled={subdlDownloadingId === cand.id}
+                          onClick={() => handleSelectSubDLCandidate(cand)}
+                          className="px-2.5 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shrink-0"
+                        >
+                          {subdlDownloadingId === cand.id ? 'Загрузка...' : 'Выбрать версию'}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* 5. OpenSubtitles REST API v1 Automatic Search Section */}
           <div
             data-testid="opensubtitles-section"
             className="pt-3 border-t border-white/10 space-y-2.5"

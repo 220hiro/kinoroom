@@ -1040,5 +1040,178 @@ test('Step 2F: Allowlist permits direct cinesrc.st and embedwaveAdapter provides
   assert.equal(sources[0].directCineSrcUrl, 'https://cinesrc.st/embed/movie/550');
 });
 
+test('Step 2F: SubDLProvider release compatibility evaluation for movies and TV series', async () => {
+  const { evaluateSubDLReleaseCompatibility } = await import('../src/lib/services/subdl');
+
+  // 1. Movie BluRay match (Fight Club)
+  const blurayMovie = evaluateSubDLReleaseCompatibility({
+    name: 'Fight Club (1999) 1080p BluRay x264 Russian',
+    releaseName: 'Fight.Club.1999.1080p.BluRay.DTS-HD.MA.5.1',
+    type: 'movie'
+  });
+  assert.equal(blurayMovie.isCompatible, true);
+  assert.equal(blurayMovie.isProvisional, false);
+  assert.equal(blurayMovie.versionTag, 'BluRay / BDRip');
+
+  // 2. Movie Director's / Extended Cut (provisional)
+  const extendedMovie = evaluateSubDLReleaseCompatibility({
+    name: 'Fight Club Extended Director Cut',
+    type: 'movie'
+  });
+  assert.equal(extendedMovie.isCompatible, true);
+  assert.equal(extendedMovie.isProvisional, true);
+  assert.equal(extendedMovie.versionTag, "Director's / Extended Cut");
+
+  // 3. Movie Trailer / CamRip rejection
+  const trailerMovie = evaluateSubDLReleaseCompatibility({
+    name: 'Fight Club HDCam CamRip sample',
+    type: 'movie'
+  });
+  assert.equal(trailerMovie.isCompatible, false);
+  assert.equal(trailerMovie.isProvisional, true);
+  assert.equal(trailerMovie.versionTag, 'Trailer / CamRip');
+
+  // 4. Movie Forced / Foreign only rejection
+  const forcedMovie = evaluateSubDLReleaseCompatibility({
+    name: 'Fight Club Russian Forced only',
+    type: 'movie'
+  });
+  assert.equal(forcedMovie.isCompatible, false);
+  assert.equal(forcedMovie.versionTag, 'Forced / Только надписи');
+
+  // 5. TV Series exact match (Breaking Bad S01E01)
+  const tvMatch = evaluateSubDLReleaseCompatibility({
+    name: 'Breaking Bad S01E01 Pilot 1080p BluRay',
+    type: 'tv',
+    requestedSeason: 1,
+    requestedEpisode: 1,
+    seasonNumber: 1,
+    episodeNumber: 1
+  });
+  assert.equal(tvMatch.isCompatible, true);
+  assert.equal(tvMatch.isProvisional, false);
+
+  // 6. TV Series episode mismatch rejection (Requested S01E01, candidate is S01E05)
+  const tvMismatch = evaluateSubDLReleaseCompatibility({
+    name: 'Breaking Bad S01E05 Gray Matter 1080p',
+    type: 'tv',
+    requestedSeason: 1,
+    requestedEpisode: 1,
+    seasonNumber: 1,
+    episodeNumber: 5
+  });
+  assert.equal(tvMismatch.isCompatible, false);
+  assert.match(tvMismatch.note, /не совпадает с запрошенной/);
+});
+
+test('Step 2F: extractSubtitleFromZip and decodeSubtitleBuffer bulletproof ZIP, BOM & CP1251 decoding', async () => {
+  const { zipSync, strToU8 } = await import('fflate');
+  const { extractSubtitleFromZip } = await import('../src/lib/services/subdl');
+  const { decodeSubtitleBuffer, parseExternalSubtitles } = await import(
+    '../src/lib/playback/externalSubtitleEngine'
+  );
+
+  const russianText = `1\n00:00:01,000 --> 00:00:04,000\nДобро пожаловать в Бойцовский клуб.\n`;
+
+  // 1. In-memory ZIP archive with __MACOSX noise and TV episodes
+  const zipData = zipSync({
+    '__MACOSX/._sub.srt': strToU8('binary junk'),
+    'Breaking.Bad.S01E02.ru.srt': strToU8('1\n00:00:01,000 --> 00:00:04,000\nВторая серия.\n'),
+    'Breaking.Bad.S01E01.ru.srt': strToU8(russianText)
+  });
+
+  // Extract S01E01 specifically
+  const extracted = extractSubtitleFromZip(zipData.buffer, 1, 1);
+  assert.ok(extracted, 'Should safely extract subtitle from ZIP');
+  assert.equal(extracted.fileName, 'Breaking.Bad.S01E01.ru.srt');
+
+  // 2. Direct ZIP decoding via decodeSubtitleBuffer
+  const autoDecodedFromZip = decodeSubtitleBuffer(zipData);
+  assert.match(autoDecodedFromZip, /Бойцовский клуб|Вторая серия/);
+
+  // 3. UTF-8 with BOM
+  const utf8Bytes = new TextEncoder().encode(russianText);
+  const utf8Bom = new Uint8Array([0xef, 0xbb, 0xbf, ...utf8Bytes]);
+  const decodedBom = decodeSubtitleBuffer(utf8Bom);
+  assert.match(decodedBom, /Добро пожаловать в Бойцовский клуб/);
+
+  // 4. UTF-16LE with BOM
+  const utf16leBytes = new Uint8Array(2 + russianText.length * 2);
+  utf16leBytes[0] = 0xff;
+  utf16leBytes[1] = 0xfe;
+  for (let i = 0; i < russianText.length; i++) {
+    const code = russianText.charCodeAt(i);
+    utf16leBytes[2 + i * 2] = code & 0xff;
+    utf16leBytes[2 + i * 2 + 1] = (code >> 8) & 0xff;
+  }
+  const decodedUtf16le = decodeSubtitleBuffer(utf16leBytes);
+  assert.match(decodedUtf16le, /Добро пожаловать в Бойцовский клуб/);
+
+  // 5. UTF-16BE with BOM
+  const utf16beBytes = new Uint8Array(2 + russianText.length * 2);
+  utf16beBytes[0] = 0xfe;
+  utf16beBytes[1] = 0xff;
+  for (let i = 0; i < russianText.length; i++) {
+    const code = russianText.charCodeAt(i);
+    utf16beBytes[2 + i * 2] = (code >> 8) & 0xff;
+    utf16beBytes[2 + i * 2 + 1] = code & 0xff;
+  }
+  const decodedUtf16be = decodeSubtitleBuffer(utf16beBytes);
+  assert.match(decodedUtf16be, /Добро пожаловать в Бойцовский клуб/);
+
+  // 6. Windows-1251 (CP1251) decoding
+  // "Бойцовский клуб" in CP1251 bytes
+  const cp1251Sample = new Uint8Array([
+    0xc1, 0xee, 0xe9, 0xf6, 0xee, 0xe2, 0xf1, 0xea, 0xe8, 0xe9, 0x20, 0xea, 0xeb, 0xf3, 0xe1
+  ]);
+  const decodedCp1251 = decodeSubtitleBuffer(cp1251Sample);
+  assert.equal(decodedCp1251, 'Бойцовский клуб', 'CP1251 must decode without mojibake');
+});
+
+test('Step 2F: SubDLProvider honestly reports REQUIRES_KEY and /api/playback/subtitles/subdl routes', async () => {
+  const { subdlProvider } = await import('../src/lib/services/subdl');
+  const { GET, POST } = await import('../src/app/api/playback/subtitles/subdl/route');
+  const { NextRequest } = await import('next/server');
+
+  const savedKey = process.env.SUBDL_API_KEY;
+  delete process.env.SUBDL_API_KEY;
+  try {
+    // 1. Search without API key
+    const searchRes = await subdlProvider.searchSubtitles({
+      tmdbId: 550,
+      type: 'movie',
+      languages: 'ru'
+    });
+    assert.equal(searchRes.status, 'REQUIRES_KEY');
+    assert.equal(searchRes.configured, false);
+    assert.equal(searchRes.candidates.length, 0);
+
+    // 2. GET route parameter validation (missing tmdbId)
+    const badReq = new NextRequest('http://localhost:3000/api/playback/subtitles/subdl');
+    const badRes = await GET(badReq);
+    assert.equal(badRes.status, 400);
+
+    // 3. GET route valid call returning honest status
+    const validReq = new NextRequest('http://localhost:3000/api/playback/subtitles/subdl?tmdbId=550&type=movie');
+    const validRes = await GET(validReq);
+    assert.equal(validRes.status, 200);
+    const validJson = await validRes.json();
+    assert.equal(validJson.status, 'REQUIRES_KEY');
+    assert.equal(validJson.tmdbId, 550);
+
+    // 4. POST route parameter validation
+    const badPostReq = new NextRequest('http://localhost:3000/api/playback/subtitles/subdl', {
+      method: 'POST',
+      body: JSON.stringify({})
+    });
+    const badPostRes = await POST(badPostReq);
+    assert.equal(badPostRes.status, 400);
+  } finally {
+    if (savedKey !== undefined) {
+      process.env.SUBDL_API_KEY = savedKey;
+    }
+  }
+});
+
 
 

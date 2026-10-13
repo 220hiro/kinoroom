@@ -963,6 +963,299 @@ test.describe('KinoRoom Player & Playback API E2E', () => {
     await expect(osBadge).toBeVisible({ timeout: 5000 });
     await expect(osBadge).toHaveText('REQUIRES_KEY');
   });
+
+  test('Step 2F: SubDL API v2 Automatic Subtitles for Fight Club (TMDB 550) — auto-download, cue sync, candidate switching, provisional badges, and localStorage preference', async ({ page }) => {
+    // Intercept SubDL API route with realistic Fight Club responses
+    await page.route('**/api/playback/subtitles/subdl*', async (route) => {
+      const request = route.request();
+      if (request.method() === 'GET') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            status: 'CONNECTED',
+            configured: true,
+            apiEndpoint: 'https://api.subdl.com/api/v2/subtitles/search',
+            tmdbId: 550,
+            mediaType: 'movie',
+            candidates: [
+              {
+                id: 'subdl-550-bluray',
+                name: 'Fight.Club.1999.1080p.BluRay.x264.ru.srt',
+                releaseName: 'Fight.Club.1999.1080p.BluRay.DTS-HD.MA.5.1',
+                lang: 'ru',
+                language: 'Russian',
+                format: 'srt',
+                fps: 23.976,
+                hearingImpaired: false,
+                downloads: 14200,
+                url: '/api/v2/subtitles/subdl-550-bluray/download',
+                downloadUrl: 'https://api.subdl.com/api/v2/subtitles/subdl-550-bluray/download',
+                isCompatibleVersion: true,
+                isProvisional: false,
+                versionTag: 'BluRay / BDRip',
+                compatibilityNote: 'Оригинальный BluRay/BDRip релиз.'
+              },
+              {
+                id: 'subdl-550-extended',
+                name: 'Fight.Club.1999.Extended.Director.Cut.ru.srt',
+                releaseName: 'Fight Club Extended Director Cut',
+                lang: 'ru',
+                language: 'Russian',
+                format: 'srt',
+                fps: 23.976,
+                hearingImpaired: false,
+                downloads: 5200,
+                url: '/api/v2/subtitles/subdl-550-extended/download',
+                downloadUrl: 'https://api.subdl.com/api/v2/subtitles/subdl-550-extended/download',
+                isCompatibleVersion: true,
+                isProvisional: true,
+                versionTag: "Director's / Extended Cut",
+                compatibilityNote: 'Внимание: версия Extended / Director’s Cut — может потребоваться сдвиг времени (+/-).'
+              }
+            ],
+            bestCandidate: {
+              id: 'subdl-550-bluray',
+              name: 'Fight.Club.1999.1080p.BluRay.x264.ru.srt',
+              releaseName: 'Fight.Club.1999.1080p.BluRay.DTS-HD.MA.5.1',
+              lang: 'ru',
+              language: 'Russian',
+              format: 'srt',
+              fps: 23.976,
+              hearingImpaired: false,
+              downloads: 14200,
+              url: '/api/v2/subtitles/subdl-550-bluray/download',
+              downloadUrl: 'https://api.subdl.com/api/v2/subtitles/subdl-550-bluray/download',
+              isCompatibleVersion: true,
+              isProvisional: false,
+              versionTag: 'BluRay / BDRip',
+              compatibilityNote: 'Оригинальный BluRay/BDRip релиз.'
+            },
+            autoLoadedSubtitle: {
+              content: `1\n00:00:10,000 --> 00:00:16,000\nБойцовский клуб: вступительная реплика из SubDL.\nВторая строка диалога.\n\n2\n00:10:00,000 --> 00:10:08,000\nРеплика Бойцовского клуба на 10-й минуте (600 секунд).\n\n3\n00:30:00,000 --> 00:30:08,000\nРеплика Бойцовского клуба на 30-й минуте (1800 секунд).\n`,
+              fileName: 'Fight.Club.1999.1080p.BluRay.x264.ru.srt',
+              format: 'srt',
+              cueCount: 3,
+              warnings: [],
+              isProvisional: false
+            },
+            message: 'Найдено 2 версий русских субтитров в SubDL.'
+          })
+        });
+      } else if (request.method() === 'POST') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            status: 'CONNECTED',
+            subtitleId: 'subdl-550-extended',
+            fileName: 'Fight.Club.1999.Extended.Director.Cut.ru.srt',
+            content: `1\n00:00:10,000 --> 00:00:16,000\nРеплика режиссёрской версии из SubDL.\n\n2\n00:10:00,000 --> 00:10:08,000\nРежиссёрская версия на 10-й минуте.\n`,
+            format: 'srt',
+            cueCount: 2,
+            warnings: ['Внимание: версия Extended / Director’s Cut'],
+            isProvisional: true,
+            message: 'Субтитры успешно загружены и декодированы.'
+          })
+        });
+      }
+    });
+
+    // Mock direct CineSrc iframe
+    await page.route('https://cinesrc.st/embed/movie/550', async (route) => {
+      const html = `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Controlled CineSrc Test Frame</title></head>
+<body style="background:#000;color:#fff;">
+  <script>
+    let currentTime = 0;
+    let duration = 7984;
+    window.addEventListener('message', (e) => {
+      const d = e.data;
+      if (!d || typeof d !== 'object') return;
+      if (d.type === 'cinesrc:command' && d.command === 'seek' && Array.isArray(d.args)) {
+        currentTime = Number(d.args[0]) || 0;
+        window.parent.postMessage({ type: 'cinesrc:timeupdate', currentTime, duration }, '*');
+      } else if (d.type === 'test:emit') {
+        if (typeof d.payload.currentTime === 'number') currentTime = d.payload.currentTime;
+        window.parent.postMessage(d.payload, '*');
+      }
+    });
+    setTimeout(() => {
+      window.parent.postMessage({ type: 'cinesrc:ready' }, '*');
+      window.parent.postMessage({ type: 'cinesrc:loadedmetadata', duration: 7984 }, '*');
+    }, 80);
+  </script>
+</body>
+</html>`;
+      await route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: html });
+    });
+
+    await page.goto('/title/movie/550');
+
+    // Open "Онлайн-источники" tab
+    await page.locator('button:has-text("Онлайн-источники")').click();
+
+    // Open "Субтитры" panel
+    await page.getByTestId('external-subtitles-button').click();
+    await expect(page.getByTestId('external-subtitles-panel')).toBeVisible();
+
+    // 1. Verify SubDL section rendered with CONNECTED status badge
+    await expect(page.getByTestId('subdl-section')).toBeVisible();
+    const subdlBadge = page.getByTestId('subdl-status-badge');
+    await expect(subdlBadge).toBeVisible();
+    await expect(subdlBadge).toHaveText('CONNECTED');
+
+    // 2. Verify candidate list has both versions
+    const candidateList = page.getByTestId('subdl-candidates-list');
+    await expect(candidateList).toBeVisible();
+    await expect(page.getByTestId('subdl-candidate-0')).toContainText('Fight.Club.1999.1080p.BluRay');
+    await expect(page.getByTestId('subdl-candidate-0')).toContainText('BluRay / BDRip');
+
+    await expect(page.getByTestId('subdl-candidate-1')).toContainText('Fight Club Extended Director Cut');
+    await expect(page.getByTestId('subdl-candidate-provisional-1')).toBeVisible();
+
+    // 3. Verify automatic autoLoadedSubtitle activated the Russian track
+    const ruOptionBtn = page.getByTestId('subtitle-option-ru');
+    await expect(ruOptionBtn).toBeEnabled();
+    await expect(ruOptionBtn).toContainText('Русские (3 реплик)');
+
+    // 4. Switch to Direct CineSrc mode and test playback synchronization
+    await page.getByTestId('mode-cinesrc-direct-btn').click();
+    await expect(page.getByTestId('subtitle-sync-status')).toContainText('Синхронизация с CineSrc активна', { timeout: 5000 });
+
+    const emitFromFrame = async (payload: Record<string, unknown>) => {
+      await page.evaluate((pl) => {
+        const iframe = document.querySelector('iframe[src="https://cinesrc.st/embed/movie/550"]') as HTMLIFrameElement | null;
+        iframe?.contentWindow?.postMessage({ type: 'test:emit', payload: pl }, '*');
+      }, payload);
+    };
+
+    // Play & timeupdate at 12s
+    await emitFromFrame({ type: 'cinesrc:play' });
+    await emitFromFrame({ type: 'cinesrc:timeupdate', currentTime: 12.0, duration: 7984 });
+
+    const cueBox = page.getByTestId('external-subtitle-cue-box');
+    await expect(cueBox).toBeVisible();
+    await expect(page.getByTestId('external-subtitle-line-0')).toHaveText('Бойцовский клуб: вступительная реплика из SubDL.');
+
+    // Seek to 10m (600s)
+    await page.getByTestId('cinesrc-seek-10m').click();
+    await expect(page.getByTestId('external-subtitle-line-0')).toHaveText('Реплика Бойцовского клуба на 10-й минуте (600 секунд).');
+
+    // 5. Test candidate version switching: select Director's Cut (candidate-1)
+    await page.getByTestId('subdl-candidate-select-btn-1').click();
+
+    // Verify Russian option updates with provisional badge
+    await expect(ruOptionBtn).toContainText('Русские (2 реплик) [Предв.]');
+    await expect(page.getByTestId('subtitle-provisional-badge')).toBeVisible();
+
+    // Re-trigger timeupdate at 10m to see new Director's Cut cue
+    await emitFromFrame({ type: 'cinesrc:timeupdate', currentTime: 602.0, duration: 7984 });
+    await expect(page.getByTestId('external-subtitle-line-0')).toHaveText('Режиссёрская версия на 10-й минуте.');
+
+    // 6. Test user preference persistence in localStorage
+    await page.getByTestId('subtitle-option-off').click();
+    await expect(cueBox).toHaveCount(0);
+    const prefOff = await page.evaluate(() => localStorage.getItem('kinoroom_subtitle_pref'));
+    expect(prefOff).toBe('off');
+
+    await ruOptionBtn.click();
+    await expect(cueBox).toBeVisible();
+    const prefRu = await page.evaluate(() => localStorage.getItem('kinoroom_subtitle_pref'));
+    expect(prefRu).toBe('ru');
+  });
+
+  test('Step 2F: SubDL API v2 TV Series Breaking Bad (TMDB 1396 S01E01) — exact season and episode parameter routing', async ({ page }) => {
+    let capturedParams: Record<string, string> = {};
+
+    await page.route('**/api/playback/subtitles/subdl*', async (route) => {
+      const url = new URL(route.request().url());
+      url.searchParams.forEach((val, key) => {
+        capturedParams[key] = val;
+      });
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          status: 'CONNECTED',
+          configured: true,
+          apiEndpoint: 'https://api.subdl.com/api/v2/subtitles/search',
+          tmdbId: 1396,
+          mediaType: 'tv',
+          season: 1,
+          episode: 1,
+          candidates: [
+            {
+              id: 'subdl-bb-s01e01',
+              name: 'Breaking.Bad.S01E01.Pilot.720p.ru.srt',
+              releaseName: 'Breaking.Bad.S01E01.Pilot.WEB-DL',
+              lang: 'ru',
+              language: 'Russian',
+              season: 1,
+              episode: 1,
+              format: 'srt',
+              fps: 23.976,
+              downloads: 8900,
+              url: '/api/v2/subtitles/subdl-bb-s01e01/download',
+              isCompatibleVersion: true,
+              isProvisional: false,
+              versionTag: 'WEB-DL / WEBRip',
+              compatibilityNote: 'Точное совпадение серии S01E01'
+            }
+          ],
+          message: 'Найдена 1 версия русских субтитров в SubDL.'
+        })
+      });
+    });
+
+    await page.goto('/title/tv/1396?season=1&episode=1');
+
+    await page.locator('button:has-text("Онлайн-источники")').click();
+    await page.getByTestId('external-subtitles-button').click();
+
+    await expect(page.getByTestId('subdl-section')).toBeVisible();
+    await expect(page.getByTestId('subdl-status-badge')).toHaveText('CONNECTED');
+    await expect(page.getByTestId('subdl-candidate-0')).toContainText('Breaking.Bad.S01E01.Pilot');
+
+    expect(capturedParams['tmdbId']).toBe('1396');
+    expect(capturedParams['type']).toBe('tv');
+    expect(capturedParams['season']).toBe('1');
+    expect(capturedParams['episode']).toBe('1');
+  });
+
+  test('Step 2F: SubDL API v2 honest REQUIRES_KEY status when API key is unconfigured', async ({ page }) => {
+    await page.route('**/api/playback/subtitles/subdl*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: false,
+          status: 'REQUIRES_KEY',
+          configured: false,
+          apiEndpoint: 'https://api.subdl.com/api/v2/subtitles/search',
+          tmdbId: 550,
+          mediaType: 'movie',
+          candidates: [],
+          message: 'API-ключ SubDL (SUBDL_API_KEY) не настроен в переменных окружения сервера KinoRoom.'
+        })
+      });
+    });
+
+    await page.goto('/title/movie/550');
+    await page.locator('button:has-text("Онлайн-источники")').click();
+    await page.getByTestId('external-subtitles-button').click();
+
+    await expect(page.getByTestId('subdl-section')).toBeVisible();
+    const badge = page.getByTestId('subdl-status-badge');
+    await expect(badge).toBeVisible();
+    await expect(badge).toHaveText('REQUIRES_KEY');
+    await expect(page.getByTestId('subdl-status-box')).toContainText('API-ключ SubDL (SUBDL_API_KEY) не настроен');
+  });
 });
 
 

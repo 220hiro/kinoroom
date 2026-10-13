@@ -493,7 +493,7 @@ export default function TitlePage({ params }: TitlePageProps) {
             <div className="text-[11px] sm:text-xs text-gray-400 text-center sm:text-right">
               {activeTab === 'native' && 'Собственный нативный HLS-плеер КиноРум (без рекламы)'}
               {activeTab === 'torrent' && 'Прямой торрент-стриминг (требуется TorrServer)'}
-              {activeTab === 'online' && 'Внешние онлайн-источники (Kodik, VidSrc, EzVidAPI)'}
+              {activeTab === 'online' && 'Экспериментальный внешний источник: EmbedWave — Cinesrc'}
             </div>
           </div>
 
@@ -560,6 +560,13 @@ export default function TitlePage({ params }: TitlePageProps) {
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                    <button
+                      onClick={() => setActiveTab('online')}
+                      className="px-4 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-300 border border-red-500/30 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
+                    >
+                      <Radio className="w-3.5 h-3.5" />
+                      <span>EmbedWave — Cinesrc (Экспериментальный)</span>
+                    </button>
                     {torrents.length > 0 && (
                       <button
                         onClick={() => setActiveTab('torrent')}
@@ -569,18 +576,6 @@ export default function TitlePage({ params }: TitlePageProps) {
                         <span>Выбрать торрент ({torrents.length})</span>
                       </button>
                     )}
-                    <a
-                      href="/player-test/providers"
-                      className="px-3 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-300 border border-red-500/30 rounded-xl text-xs font-semibold transition-all"
-                    >
-                      Лаборатория 7 источников ➔
-                    </a>
-                    <a
-                      href="/player-test"
-                      className="px-3 py-2 bg-white/10 hover:bg-white/15 text-gray-300 hover:text-white rounded-xl text-xs font-semibold transition-all"
-                    >
-                      Тест-лаборатория /player-test ➔
-                    </a>
                   </div>
                 </div>
               )}

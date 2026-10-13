@@ -95,7 +95,7 @@ export default function ProvidersTestLabPage() {
 
   // Active Viewing Area State
   const [activeProviderId, setActiveProviderId] = useState<ExternalAdapterId>('embedwave');
-  const [sandboxEnabled, setSandboxEnabled] = useState<boolean>(false); // default off for compatibility on mobile
+  const [sandboxEnabled, setSandboxEnabled] = useState<boolean>(true); // default on for security isolation
   const [iframeKey, setIframeKey] = useState<number>(1);
   const [postMessageEvents, setPostMessageEvents] = useState<string[]>([]);
 
@@ -483,7 +483,7 @@ export default function ProvidersTestLabPage() {
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
                 sandbox={
                   sandboxEnabled
-                    ? 'allow-scripts allow-same-origin allow-forms allow-presentation'
+                    ? 'allow-scripts allow-same-origin allow-forms allow-modals allow-presentation'
                     : undefined
                 }
               />

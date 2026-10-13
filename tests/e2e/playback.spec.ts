@@ -606,129 +606,134 @@ test.describe('KinoRoom Player & Playback API E2E', () => {
     await expect(attribution).toHaveCount(0);
   });
 
-  test('External Sources UI & API: Tab switching, preserved adapters under audit, and ad protection', async ({ page, request }) => {
-    // 1. API verification: all 3 adapters are preserved and active for user testing
-    const tvApiRes = await request.get('/api/playback/external-sources?tmdbId=1396&type=tv&season=2&episode=4');
+  test('Step 2E: Fight Club (TMDB 550) & Breaking Bad (TMDB 1396 S01E01) use only EmbedWave — Cinesrc with zero ad provider requests', async ({ page, request }) => {
+    const forbiddenDomains = [
+      'vidsrc.sh',
+      'vidsrc.to',
+      'vidsrc.hair',
+      'vidlink.pro',
+      'vidcore.org',
+      'vixsrc.to',
+      'autoembed.cc',
+      'ezvidapi.com',
+      'multiembed.mov',
+      'kinobox.tv'
+    ];
+    const forbiddenRequests: string[] = [];
+
+    page.on('request', (req) => {
+      const url = req.url().toLowerCase();
+      if (forbiddenDomains.some((d) => url.includes(d))) {
+        forbiddenRequests.push(url);
+      }
+    });
+
+    // 1. API verification for Movie (Fight Club TMDB 550) and TV (Breaking Bad TMDB 1396 S01E01)
+    const movieApiRes = await request.get('/api/playback/external-sources?tmdbId=550&type=movie');
+    expect(movieApiRes.ok()).toBe(true);
+    const movieJson = await movieApiRes.json();
+    expect(movieJson.success).toBe(true);
+    expect(movieJson.sources.length).toBe(1);
+    expect(movieJson.sources[0].name).toBe('EmbedWave — Cinesrc');
+    expect(movieJson.sources[0].iframeUrl).toBe('https://embedwave.cc/embed/movie/550?server=cinesrc');
+
+    const tvApiRes = await request.get('/api/playback/external-sources?tmdbId=1396&type=tv&season=1&episode=1');
     expect(tvApiRes.ok()).toBe(true);
     const tvJson = await tvApiRes.json();
     expect(tvJson.success).toBe(true);
-    expect(Array.isArray(tvJson.sources)).toBe(true);
+    expect(tvJson.sources.length).toBe(1);
+    expect(tvJson.sources[0].name).toBe('EmbedWave — Cinesrc');
+    expect(tvJson.sources[0].iframeUrl).toBe('https://embedwave.cc/embed/tv/1396/1/1?server=cinesrc');
 
-    const vidsrcItem = tvJson.sources.find((s: any) => s.adapter === 'vidsrc');
-    expect(vidsrcItem).toBeDefined();
-    expect(vidsrcItem.status).toBe('available');
-    expect(vidsrcItem.iframeUrl).toContain('vidsrc.sh/embed/tv/1396/2/4');
-
-    const ezvidItem = tvJson.sources.find((s: any) => s.adapter === 'ezvid');
-    expect(ezvidItem).toBeDefined();
-    expect(ezvidItem.status).toBe('available');
-    expect(ezvidItem.iframeUrl).toContain('ezvidapi.com/embed/tv/1396/2/4');
-
-    const kodikItem = tvJson.sources.find((s: any) => s.adapter === 'kodik');
-    expect(kodikItem).toBeDefined();
-
-    // 2. UI verification in catalog (/title/movie/10331)
-    await page.goto('/title/movie/10331');
-
-    // Native tab is active by default with KinoRoomPlayer
-    await expect(page.locator('video')).toBeVisible();
+    // 2. UI verification for Fight Club (/title/movie/550)
+    await page.goto('/title/movie/550');
 
     // Switch to "Онлайн-источники" tab
     const onlineTabBtn = page.locator('button:has-text("Онлайн-источники")');
-    await expect(onlineTabBtn).toBeVisible();
+    await expect(onlineTabBtn).toBeVisible({ timeout: 10_000 });
     await onlineTabBtn.click();
 
-    // Online player container rendered
     const onlineContainer = page.locator('[data-testid="online-player-container"]');
     await expect(onlineContainer).toBeVisible({ timeout: 10_000 });
 
-    // Verify presence of buttons for all three preserved adapters
-    await expect(page.locator('button:has-text("VidSrc Global")')).toBeVisible();
-    await expect(page.locator('button:has-text("Kodik")')).toBeVisible();
-    await expect(page.locator('button:has-text("EzVidAPI")')).toBeVisible();
+    // Single experimental card "EmbedWave — Cinesrc" is displayed
+    const card = page.locator('[data-testid="experimental-source-card"]');
+    await expect(card).toContainText('EmbedWave — Cinesrc');
+    await expect(card).toContainText('Экспериментальный');
 
-    // Switch to VidSrc -> iframe is mounted for user testing
-    const vidsrcBtn = page.locator('button:has-text("VidSrc Global")');
-    await vidsrcBtn.click();
-    const vidsrcIframe = page.locator('iframe[src*="vidsrc.sh"]');
-    await expect(vidsrcIframe).toBeVisible({ timeout: 5000 });
+    // Honest capabilities list is displayed
+    const capabilities = page.locator('[data-testid="cinesrc-capabilities-info"]');
+    await expect(capabilities).toContainText('Воспроизведение фильма подтверждено на iPhone для тестового TMDB 550.');
+    await expect(capabilities).toContainText('Русская озвучка не подтверждена.');
+    await expect(capabilities).toContainText('Качество не подтверждено.');
+    await expect(capabilities).toContainText('Полное отсутствие рекламы не подтверждено.');
 
-    // Switch to EzVidAPI -> VidSrc iframe unmounted, EzVidAPI iframe mounted for user testing
-    const ezvidBtn = page.locator('button:has-text("EzVidAPI")');
-    await ezvidBtn.click();
-    await expect(vidsrcIframe).toHaveCount(0);
-    const ezvidIframe = page.locator('iframe[src*="ezvidapi.com"]');
-    await expect(ezvidIframe).toBeVisible({ timeout: 5000 });
+    // Rejected provider buttons must NOT exist in UI
+    await expect(page.locator('button:has-text("VidSrc")')).toHaveCount(0);
+    await expect(page.locator('button:has-text("VidLink")')).toHaveCount(0);
+    await expect(page.locator('button:has-text("VidCore")')).toHaveCount(0);
+    await expect(page.locator('button:has-text("Kodik")')).toHaveCount(0);
+    await expect(page.locator('button:has-text("EzVidAPI")')).toHaveCount(0);
 
-    // Switch to Kodik -> EzVidAPI iframe unmounted, Kodik diagnostic card shown
-    const kodikBtn = page.locator('button:has-text("Kodik")');
-    await kodikBtn.click();
-    await expect(ezvidIframe).toHaveCount(0);
-    await expect(page.locator('h4:has-text("Kodik")')).toBeVisible();
+    // Iframe uses ?server=cinesrc and has strict sandbox
+    const movieIframe = page.locator('iframe[src="https://embedwave.cc/embed/movie/550?server=cinesrc"]');
+    await expect(movieIframe).toBeVisible({ timeout: 5000 });
+    await expect(movieIframe).toHaveAttribute(
+      'sandbox',
+      'allow-scripts allow-same-origin allow-forms allow-modals allow-presentation'
+    );
 
-    // Switch back to "Плеер КиноРум" - KinoRoomPlayer retains functionality without regressions
-    const nativeTabBtn = page.locator('button:has-text("Плеер КиноРум")');
-    await nativeTabBtn.click();
-    await expect(page.locator('video')).toBeVisible();
+    // Re-opening / resetting card keeps ?server=cinesrc and never reverts to nxsha
+    const resetBtn = page.locator('button:has-text("Сбросить на Cinesrc")');
+    await resetBtn.click();
+    await expect(movieIframe).toBeVisible({ timeout: 5000 });
+
+    // 3. UI verification for TV Series Breaking Bad (/title/tv/1396)
+    await page.goto('/title/tv/1396');
+    const tvOnlineTabBtn = page.locator('button:has-text("Онлайн-источники")');
+    await expect(tvOnlineTabBtn).toBeVisible({ timeout: 10_000 });
+    await tvOnlineTabBtn.click();
+
+    const tvIframe = page.locator('iframe[src="https://embedwave.cc/embed/tv/1396/1/1?server=cinesrc"]');
+    await expect(tvIframe).toBeVisible({ timeout: 5000 });
+
+    // Confirm zero requests were made to any rejected/ad domains
+    expect(forbiddenRequests).toEqual([]);
   });
 
-  test('Step 2D Laboratory (/player-test/providers): 7 candidates cards, preset switching, clean unmounting and QA panel', async ({ page }) => {
+  test('Step 2E Laboratory (/player-test/providers): Audit cards, EmbedWave ?server=cinesrc, and no rejected iframes mounted', async ({ page }) => {
     await page.goto('/player-test/providers');
 
-    // 1. Check title and header
     await expect(page.locator('h1:has-text("Анализ и ручная проверка")')).toBeVisible({ timeout: 10_000 });
-
-    // 2. Verify all 7 provider cards are present
-    const expectedProviders = [
-      { id: 'embedwave', name: 'EmbedWave' },
-      { id: 'vidcore', name: 'VidCore' },
-      { id: 'vidlink', name: 'VidLink' },
-      { id: 'vidsrc_hair', name: 'VidSrc.hair' },
-      { id: 'vixsrc', name: 'VixSrc' },
-      { id: 'autoembed', name: 'AutoEmbed' },
-      { id: 'ezvid', name: 'EzVidAPI' }
-    ];
-
     await expect(page.locator('[data-testid="provider-card-embedwave"]')).toBeVisible({ timeout: 10_000 });
 
-    for (const p of expectedProviders) {
-      await expect(page.locator(`[data-testid="provider-card-${p.id}"]`)).toBeVisible();
-    }
+    // 1. Default active provider is EmbedWave — Cinesrc with ?server=cinesrc
+    const defaultIframe = page.locator('iframe[src="https://embedwave.cc/embed/movie/550?server=cinesrc"]');
+    await expect(defaultIframe).toBeVisible({ timeout: 5000 });
 
-    // 3. Preset switching: click "Breaking Bad (TV S1:E1)"
+    // 2. Preset switching: click "Breaking Bad (TV S1:E1)"
     const breakingBadBtn = page.locator('button:has-text("Breaking Bad")');
     await breakingBadBtn.click();
-    await expect(page.locator('input[value="1396"]')).toBeVisible();
+    const tvIframe = page.locator('iframe[src="https://embedwave.cc/embed/tv/1396/1/1?server=cinesrc"]');
+    await expect(tvIframe).toBeVisible({ timeout: 5000 });
 
-    // 4. Iframe lifecycle & unmounting check:
-    // EmbedWave is active by default -> Breaking Bad TV embed mounts
-    const embedwaveIframe = page.locator('iframe[src*="embedwave.cc/embed/tv/1396/1/1"]');
-    await expect(embedwaveIframe).toBeVisible({ timeout: 5000 });
-
-    // Open VidLink player -> EmbedWave iframe unmounts, VidLink mounts
+    // 3. Selecting a rejected provider (VidLink) unmounts EmbedWave and does NOT mount any rejected iframe
     const vidlinkCard = page.locator('[data-testid="provider-card-vidlink"]');
     const openVidlinkBtn = vidlinkCard.locator('button:has-text("Открыть плеер")');
     await openVidlinkBtn.click();
 
-    await expect(embedwaveIframe).toHaveCount(0); // Clean unmount
-    const vidlinkIframe = page.locator('iframe[src*="vidlink.pro/tv/1396/1/1"]');
-    await expect(vidlinkIframe).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('iframe')).toHaveCount(0);
+    await expect(page.locator('h4:has-text("VidLink: UNAVAILABLE")')).toBeVisible();
 
-    // Switch to VidSrc.hair (UNAVAILABLE) -> VidLink unmounts, explicit error card shown
+    // 4. Selecting VidSrc.hair shows DNS NXDOMAIN diagnostic without mounting iframe
     const vidsrcHairCard = page.locator('[data-testid="provider-card-vidsrc_hair"]');
     const openHairBtn = vidsrcHairCard.locator('button:has-text("Открыть плеер")');
     await openHairBtn.click();
 
-    await expect(vidlinkIframe).toHaveCount(0); // Clean unmount
+    await expect(page.locator('iframe')).toHaveCount(0);
     await expect(page.locator('h4:has-text("VidSrc.hair: UNAVAILABLE")')).toBeVisible();
     await expect(page.locator('text=DNS NXDOMAIN')).toBeVisible();
-
-    // 5. Manual QA Checklist panel interaction
-    await expect(page.locator('h3:has-text("Чеклист ручной проверки: VidSrc.hair")')).toBeVisible();
-
-    // 6. Copy results button exists
-    const copyBtn = page.locator('button:has-text("Скопировать все результаты")');
-    await expect(copyBtn).toBeVisible();
   });
 });
+
 

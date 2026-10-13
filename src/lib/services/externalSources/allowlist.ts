@@ -1,29 +1,12 @@
 /**
- * Security Allowlist for External Embed Players
- * Prevents arbitrary iframe injection, SSRF, XSS, and unauthorized external redirection.
+ * Security Allowlist for External Embed Players (Step 2E)
+ * Strictly restricts external iframe embedding to approved experimental sources.
+ * All ad-supported, blocked, or defunct domains (VidSrc, VidLink, VidCore, VixSrc, AutoEmbed, EzVidAPI)
+ * have been removed from the active allowlist following iPhone Safari verification.
  */
 
 export const TRUSTED_IFRAME_DOMAINS = [
-  'embedwave.cc',
-  'vidcore.org',
-  'vidlink.pro',
-  'vidsrc.hair',
-  'vixsrc.to',
-  'autoembed.cc',
-  'ezvidapi.com',
-  'vidsrc.sh',
-  'vidsrc.to',
-  'vidsrc.xyz',
-  'vidsrc.in',
-  'vidsrc.pm',
-  'vidsrc.net',
-  'kodik.info',
-  'kodikplayer.com',
-  'kodik.cc',
-  'kodik.biz',
-  'kodikonline.com',
-  'aniqit.com',
-  'kinobox.tv'
+  'embedwave.cc'
 ] as const;
 
 /**
@@ -46,7 +29,7 @@ export function isValidExternalIframeUrl(inputUrl: string | undefined | null): b
 
     const hostname = parsed.hostname.toLowerCase();
 
-    // Check exact match or trusted subdomain (e.g. sub.vidsrc.sh)
+    // Check exact match or trusted subdomain
     const isAllowed = TRUSTED_IFRAME_DOMAINS.some(
       (domain) => hostname === domain || hostname.endsWith(`.${domain}`)
     );

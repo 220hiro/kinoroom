@@ -1,25 +1,14 @@
 import { ExternalSourcesRequest, UnifiedProviderInfo } from './types';
-import { isValidExternalIframeUrl } from './allowlist';
 
 /**
  * VidLink Adapter (https://vidlink.pro/)
  *
- * Characteristics:
- *  - Routes: /movie/{tmdbId} and /tv/{tmdbId}/{season}/{episode}
- *  - Player Events: postMessage ({ type: 'play' | 'pause' | 'timeupdate' | 'ended' | 'seeked' })
- *  - Subtitles: Supports custom ?sub.url= and ?sub.label= query parameters
- *  - Network: HTTP 200 OK on embed routes
+ * Manual iPhone Verification Result (Step 2E):
+ *  - Rejected due to advertisements.
+ *  - Removed from regular UI and iframe allowlist.
+ *  - embedUrl is undefined to prevent loading rejected ad iframes.
  */
-export function getVidLinkProviderInfo(request: ExternalSourcesRequest): UnifiedProviderInfo {
-  const { tmdbId, type, season = 1, episode = 1 } = request;
-  const isTv = type === 'tv';
-
-  const embedUrl = isTv
-    ? `https://vidlink.pro/tv/${encodeURIComponent(tmdbId)}/${encodeURIComponent(season)}/${encodeURIComponent(episode)}`
-    : `https://vidlink.pro/movie/${encodeURIComponent(tmdbId)}`;
-
-  const isSafeUrl = isValidExternalIframeUrl(embedUrl);
-
+export function getVidLinkProviderInfo(_request: ExternalSourcesRequest): UnifiedProviderInfo {
   return {
     id: 'vidlink',
     name: 'VidLink',
@@ -28,18 +17,19 @@ export function getVidLinkProviderInfo(request: ExternalSourcesRequest): Unified
     requiresApiKey: false,
     requiresPayment: false,
     claimedAdFree: true,
-    verifiedAdFree: 'CLAIMED_AD_FREE',
-    availabilityStatus: isSafeUrl ? 'AVAILABLE' : 'UNSUPPORTED',
-    playbackStatus: 'NOT_TESTED',
-    supportedPlaybackMode: 'iframe',
-    embedUrl,
-    availableLanguages: ['Original', 'Subtitles'],
-    availableSubtitles: ['Multi-Language', 'External VTT URL'],
-    verifiedQuality: 'HD (Auto)',
+    verifiedAdFree: 'ADS_DETECTED',
+    availabilityStatus: 'UNAVAILABLE',
+    playbackStatus: 'PLAYBACK_FAILED',
+    supportedPlaybackMode: 'unsupported',
+    embedUrl: undefined,
+    availableLanguages: [],
+    availableSubtitles: [],
+    verifiedQuality: undefined,
     lastCheckedAt: new Date().toISOString(),
-    rightsStatus: 'Сторонний агрегатор (коммерческий контент)',
-    badge: 'postMessage API',
-    description: 'Продвинутый плеер VidLink: поддержка postMessage событий, передача внешних субтитров, адаптивный дизайн для мобильных',
-    diagnostics: 'Маршруты /movie и /tv отвечают HTTP 200. Требуется ручная проверка на iPhone для контроля редиректов при клике.'
+    errorReason: 'Отклонён по результатам проверки на iPhone: обнаружена реклама. Источник отключён.',
+    rightsStatus: 'Отклонён (обнаружена реклама)',
+    badge: 'Отклонён (Реклама)',
+    description: 'Плеер VidLink: отклонён и удалён из интерфейса из-за обнаруженной рекламы',
+    diagnostics: 'Проверка на iPhone выявила рекламу. Автоматическая загрузка iframe заблокирована.'
   };
 }

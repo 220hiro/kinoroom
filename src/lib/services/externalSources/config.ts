@@ -1,5 +1,12 @@
 export interface ExternalSourcesConfig {
   enabled: boolean;
+  embedwave: {
+    enabled: boolean;
+    baseUrl: string;
+    defaultServer: 'cinesrc';
+    timeoutMs: number;
+    disabledReason: string;
+  };
   kodik: {
     enabled: boolean;
     kinoboxApiUrl: string;
@@ -24,27 +31,31 @@ export interface ExternalSourcesConfig {
 
 export const EXTERNAL_SOURCES_CONFIG: ExternalSourcesConfig = {
   enabled: process.env.ENABLE_EXTERNAL_SOURCES !== 'false',
+  embedwave: {
+    enabled: process.env.ENABLE_EMBEDWAVE !== 'false',
+    baseUrl: 'https://embedwave.cc',
+    defaultServer: 'cinesrc',
+    timeoutMs: 4000,
+    disabledReason: 'Источник EmbedWave — Cinesrc временно отключён.'
+  },
   kodik: {
-    enabled: process.env.ENABLE_KODIK !== 'false', // Enabled for user testing and verification
+    enabled: false, // Скрыт из интерфейса (API пока недоступен); наработки адаптера сохранены
     kinoboxApiUrl: process.env.KINOBOX_API_URL || 'https://kinobox.tv/api/players',
-    rateLimitMs: 500, // 2 req/s
+    rateLimitMs: 500,
     timeoutMs: 5000,
-    cacheTtlMs: 60 * 60 * 1000, // 1 hour
-    disabledReason:
-      'Адаптер Kodik: проверка наличия рекламы и озвучек.'
+    cacheTtlMs: 60 * 60 * 1000,
+    disabledReason: 'Kodik/Kinobox API временно недоступен. Скрыт из пользовательского интерфейса.'
   },
   vidsrc: {
-    enabled: process.env.ENABLE_VIDSRC !== 'false', // Enabled for user testing and verification
-    baseUrl: process.env.VIDSRC_BASE_URL || 'https://vidsrc.sh',
+    enabled: false, // Отклонён: обнаружена реклама на iPhone
+    baseUrl: 'https://vidsrc.sh',
     timeoutMs: 5000,
-    disabledReason:
-      'Источник VidSrc: тестирование всплывающей рекламы на iPhone.'
+    disabledReason: 'Источник VidSrc отклонён из-за рекламы на iPhone.'
   },
   ezvid: {
-    enabled: process.env.ENABLE_EZVID !== 'false', // Enabled for user testing and verification
+    enabled: false, // Отклонён: HTTP 502 Bad Gateway
     baseUrl: 'https://ezvidapi.com',
     timeoutMs: 3000,
-    disabledReason:
-      'Адаптер EzVidAPI: тестирование заявленного ad-free стриминга.'
+    disabledReason: 'Источник EzVidAPI отклонён: возвращает HTTP 502 Bad Gateway.'
   }
 };

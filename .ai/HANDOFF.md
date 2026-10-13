@@ -1,52 +1,34 @@
 # Handoff
 
-Updated: 2026-10-12
+Updated: 2026-10-13
 
 ## Current goal
 
-Реализован Шаг 2D: Интеграция 7 потенциальных видеопровайдеров и интерактивная тестовая лаборатория для проверки на iPhone Safari:
-EmbedWave, VidCore, VidLink, VidSrc.hair, VixSrc, AutoEmbed, EzVidAPI.
+Реализован Шаг 2E: Очистка видеоисточников и сохранение единственного перспективного экспериментального внешнего источника `EmbedWave — Cinesrc` (`?server=cinesrc`).
 
 ## Done
 
-- **Шаг 2D: Стандартизированная архитектура адаптеров (`src/lib/services/externalSources/`)**:
-  - `types.ts`: Единый интерфейс `UnifiedProviderInfo`, строгие перечисления `AvailabilityStatus`, `PlaybackStatus`, `AdStatus`, `SupportedPlaybackMode`, `ProviderManualQACheck`.
-  - `allowlist.ts`: В `TRUSTED_IFRAME_DOMAINS` добавлены домены `embedwave.cc`, `vidcore.org`, `vidlink.pro`, `vidsrc.hair`, `vixsrc.to`, `autoembed.cc`, `ezvidapi.com`.
-  - `embedwaveAdapter.ts`: Адаптер `EmbedWave` (`https://embedwave.cc/`, статус AVAILABLE, заявлен No Ads).
-  - `vidcoreAdapter.ts`: Адаптер `VidCore` (`https://vidcore.org/`, статус AVAILABLE, поддержка TMDB).
-  - `vidlinkAdapter.ts`: Адаптер `VidLink` (`https://vidlink.pro/`, статус AVAILABLE, события postMessage, субтитры).
-  - `vidsrcHairAdapter.ts`: Адаптер `VidSrc.hair` (статус UNAVAILABLE, DNS NXDOMAIN).
-  - `vixsrcAdapter.ts`: Адаптер `VixSrc` (`https://vixsrc.to/`, статус AVAILABLE, события postMessage).
-  - `autoembedAdapter.ts`: Адаптер `AutoEmbed` (статус UNAVAILABLE, DNS NXDOMAIN).
-  - `ezvidAdapter.ts`: Адаптер `EzVidAPI` (статус UNAVAILABLE, Cloudflare 502 Bad Gateway / X-Frame-Options).
-  - `registry.ts`: Центральный реестр `ExternalSourceRegistry` со сквозным зондированием доступности `probeProvider`.
-- **API Провайдеров (`src/app/api/playback/providers/route.ts`)**:
-  - Серверный эндпоинт `GET /api/playback/providers` с поддержкой живой проверки сетевой доступности (`?probe=true`).
-- **Тестовая Лаборатория (`src/app/player-test/providers/page.tsx`)**:
-  - Доступна по адресу `/player-test/providers`.
-  - Адаптирована под iPhone Safari (крупные тач-элементы, безопасные отступы).
-  - Селектор пресетов (*Бойцовский клуб*, *Ночь живых мертвецов*, *Во все тяжкие S1:E1*).
-  - Раздел активного просмотра с гарантированным размонтированием iframe при переключении.
-  - Тумблер sandbox (ВКЛ / ВЫКЛ) для отладки политик встраивания.
-  - Лог postMessage событий реального времени.
-  - Панель ручного чеклиста (8 переключателей Да/Нет, заметки, копирование сводного Markdown-отчета в буфер обмена).
-  - Диагностика ошибок вместо черного экрана для неработающих источников.
-- **Интеграция навигации**:
-  - Быстрый переход в лабораторию из `/player-test` и страницы деталей фильма `/title/[type]/[id]`.
-- **Автоматизированное тестирование**:
-  - `tests/playback.test.ts`: 26 unit-тестов успешно пройдены.
-  - `tests/e2e/playback.spec.ts`: 18 Playwright E2E тестов успешно пройдены (включая сценарий лаборатории).
-
-## Verified
-
-- `npm run typecheck`: OK (0 ошибок).
-- `npm test`: 26/26 тестов успешно пройдены.
-- `npm run build`: OK (20 маршрутов успешно скомпилированы в Next.js Turbopack).
-- `npx playwright test --project=chromium`: 18/18 тестов успешно пройдены.
-- Git Push: Ветка `feature/playback-api-player` (коммит `0f4d599`).
-- Vercel Preview: Деплой завершен со статусом `success`.
+- **Шаг 2E: Очистка источников и изоляция EmbedWave Cinesrc (`src/lib/services/externalSources/`)**:
+  - `embedwaveAdapter.ts`: Документированный выбор сервера `?server=cinesrc` (`https://embedwave.cc/embed/movie/{tmdbId}?server=cinesrc` и `https://embedwave.cc/embed/tv/{tmdbId}/{season}/{episode}?server=cinesrc`). Автоматический выбор `nxsha (Multi HD)` исключён.
+  - `allowlist.ts`: В `TRUSTED_IFRAME_DOMAINS` оставлен строго `embedwave.cc`. Все рекламные и неработающие домены (`vidsrc.sh`, `vidsrc.to`, `vidlink.pro`, `vidcore.org`, `vixsrc.to`, `ezvidapi.com`, `multiembed.mov`) исключены из allowlist.
+  - `index.ts`: Пользовательский агрегатор `getExternalSources` возвращает только `EmbedWave — Cinesrc`. Адаптер `kodikAdapter.ts` сохранён в кодовой базе в отключённом состоянии (`enabled: false`) без отображения в UI.
+  - Отклонённые адаптеры в реестре (`vidcoreAdapter.ts`, `vidlinkAdapter.ts`, `vixsrcAdapter.ts`, `ezvidAdapter.ts`, `vidsrcHairAdapter.ts`, `autoembedAdapter.ts`) переведены в `UNAVAILABLE` с `embedUrl: undefined` (отклонённые iframe не монтируются).
+  - `src/lib/services/onlineSources.ts` и `src/components/player/KinoboxPlayer.tsx`: очищены от старых рекламных ссылок (`multiembed`, `vidsrc.to`, `delivembid`) и автоматической загрузки сторонних скриптов.
+- **Упрощённый интерфейс (`src/components/player/OnlinePlayer.tsx`, `src/app/title/[type]/[id]/page.tsx`)**:
+  - Отображается единственная экспериментальная карточка **«EmbedWave — Cinesrc»** с плашкой «Экспериментальный» (без недоказанных плашек «1080p», «Русская озвучка», «Без рекламы»).
+  - Выведены честные характеристики:
+    * Воспроизведение фильма подтверждено на iPhone для тестового TMDB 550.
+    * Русская озвучка не подтверждена.
+    * Качество не подтверждено.
+    * Полное отсутствие рекламы не подтверждено.
+  - Добавлена кнопка «Сбросить на Cinesrc» и предупреждение о внутреннем меню серверов внутри iframe.
+  - Iframe изолирован атрибутом `sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-presentation"` (блокирует всплывающие окна и редиректы верхнего окна).
+- **Тесты (`tests/playback.test.ts`, `tests/e2e/playback.spec.ts`)**:
+  - `npm run typecheck`: 0 ошибок.
+  - `npm test`: 25/25 unit-тестов пройдено.
+  - `npm run build`: 20 маршрутов успешно собраны.
+  - `npx playwright test --project=chromium`: 18/18 E2E-тестов пройдено (включая проверку Fight Club TMDB 550, Breaking Bad TMDB 1396 S01E01 и контроль отсутствия сетевых запросов к рекламным провайдерам).
 
 ## Branch
 
-- `feature/playback-api-player` (коммит `0f4d599`).
-- Ветка `master` и Production не затронуты.
+- `feature/playback-api-player` (ветка `master` и Production не изменялись).

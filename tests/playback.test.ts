@@ -525,119 +525,94 @@ test('OpenMediaDiscoveryService: SSRF and host allowlist enforcement', async () 
   assert.equal(isAccessible, true, 'Wikimedia Commons video transcode must be reachable via range request');
 });
 
-test('External Sources: Allowlist validates safe iframe domains and rejects untrusted/XSS URLs', async () => {
+test('External Sources: Allowlist strictly permits embedwave.cc and rejects removed ad/broken/XSS URLs', async () => {
   const { isValidExternalIframeUrl } = await import('../src/lib/services/externalSources/allowlist');
 
-  // Valid trusted domains
-  assert.equal(isValidExternalIframeUrl('https://vidsrc.sh/embed/movie/10331'), true);
-  assert.equal(isValidExternalIframeUrl('https://vidsrc.sh/embed/tv/1396/1/1'), true);
-  assert.equal(isValidExternalIframeUrl('https://kodikplayer.com/seria/73959/68e2e57cb95f7fb93655637acaca26c2/720p'), true);
-  assert.equal(isValidExternalIframeUrl('https://aniqit.com/video/123/hash'), true);
-  assert.equal(isValidExternalIframeUrl('https://vidsrc.to/embed/movie/550'), true);
-  assert.equal(isValidExternalIframeUrl('https://ezvidapi.com/embed/movie/10331'), true);
-  assert.equal(isValidExternalIframeUrl('https://kodik.cc/video/123'), true);
+  // Valid trusted EmbedWave Cinesrc routes
+  assert.equal(isValidExternalIframeUrl('https://embedwave.cc/embed/movie/550?server=cinesrc'), true);
+  assert.equal(isValidExternalIframeUrl('https://embedwave.cc/embed/tv/1396/1/1?server=cinesrc'), true);
+
+  // Rejected ad-supported and defunct domains removed in Step 2E
+  assert.equal(isValidExternalIframeUrl('https://vidsrc.sh/embed/movie/550'), false, 'VidSrc.sh must be rejected');
+  assert.equal(isValidExternalIframeUrl('https://vidsrc.to/embed/movie/550'), false, 'VidSrc.to must be rejected');
+  assert.equal(isValidExternalIframeUrl('https://vidlink.pro/movie/550'), false, 'VidLink must be rejected');
+  assert.equal(isValidExternalIframeUrl('https://vidcore.org/embed/movie/550'), false, 'VidCore must be rejected');
+  assert.equal(isValidExternalIframeUrl('https://vixsrc.to/movie/550'), false, 'VixSrc must be rejected');
+  assert.equal(isValidExternalIframeUrl('https://ezvidapi.com/embed/movie/550'), false, 'EzVidAPI must be rejected');
+  assert.equal(isValidExternalIframeUrl('https://multiembed.mov/?video_id=550&tmdb=1'), false, 'MultiEmbed must be rejected');
 
   // Rejected invalid or unsafe URLs
-  assert.equal(isValidExternalIframeUrl('http://vidsrc.sh/embed/movie/10331'), false, 'Non-HTTPS must be rejected');
+  assert.equal(isValidExternalIframeUrl('http://embedwave.cc/embed/movie/550?server=cinesrc'), false, 'Non-HTTPS must be rejected');
   assert.equal(isValidExternalIframeUrl('https://untrusted-pirate-site.ru/player'), false, 'Untrusted host must be rejected');
-  assert.equal(isValidExternalIframeUrl('https://vidsrc.sh.malicious.com/embed'), false, 'Lookalike domain must be rejected');
+  assert.equal(isValidExternalIframeUrl('https://embedwave.cc.malicious.com/embed'), false, 'Lookalike domain must be rejected');
   assert.equal(isValidExternalIframeUrl('javascript:alert(1)'), false, 'javascript: scheme must be rejected');
   assert.equal(isValidExternalIframeUrl('data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg=='), false, 'data: scheme must be rejected');
-  assert.equal(isValidExternalIframeUrl('https://vidsrc.sh/embed/<script>alert(1)</script>'), false, 'XSS payloads must be rejected');
+  assert.equal(isValidExternalIframeUrl('https://embedwave.cc/embed/<script>alert(1)</script>'), false, 'XSS payloads must be rejected');
   assert.equal(isValidExternalIframeUrl(''), false);
   assert.equal(isValidExternalIframeUrl(null as any), false);
 });
 
-test('External Sources: VidSrc adapter generates safe routes when enabled and diagnostics when disabled', async () => {
-  const { getVidSrcSources } = await import('../src/lib/services/externalSources/vidsrcAdapter');
+test('Step 2E: EmbedWave — Cinesrc adapter builds documented ?server=cinesrc routes and never selects nxsha', async () => {
+  const { getEmbedWaveSources, buildEmbedWaveCinesrcUrl } = await import('../src/lib/services/externalSources/embedwaveAdapter');
   const { EXTERNAL_SOURCES_CONFIG } = await import('../src/lib/services/externalSources/config');
 
-  // 1. Movie route when enabled
-  EXTERNAL_SOURCES_CONFIG.vidsrc.enabled = true;
-  const movieSources = getVidSrcSources({
-    tmdbId: 10331,
-    type: 'movie',
-    title: 'Night of the Living Dead'
-  });
-  assert.equal(movieSources.length, 1);
-  assert.equal(movieSources[0].adapter, 'vidsrc');
-  assert.equal(movieSources[0].status, 'available');
-  assert.equal(movieSources[0].iframeUrl, 'https://vidsrc.sh/embed/movie/10331');
+  // 1. Movie route (Fight Club TMDB 550)
+  const movieUrl = buildEmbedWaveCinesrcUrl({ tmdbId: 550, type: 'movie' });
+  assert.equal(movieUrl, 'https://embedwave.cc/embed/movie/550?server=cinesrc');
+  assert.equal(movieUrl.includes('nxsha'), false);
 
-  // 2. TV Series route with season and episode
-  const tvSources = getVidSrcSources({
+  const movieSources = getEmbedWaveSources({ tmdbId: 550, type: 'movie', title: 'Fight Club' });
+  assert.equal(movieSources.length, 1);
+  assert.equal(movieSources[0].adapter, 'embedwave');
+  assert.equal(movieSources[0].name, 'EmbedWave — Cinesrc');
+  assert.equal(movieSources[0].status, 'available');
+  assert.equal(movieSources[0].iframeUrl, 'https://embedwave.cc/embed/movie/550?server=cinesrc');
+  assert.equal(movieSources[0].badge, 'Экспериментальный');
+  // Must NOT claim unverified 1080p, Russian audio, or guaranteed ad-free badge
+  assert.notEqual(movieSources[0].badge, '1080p');
+  assert.notEqual(movieSources[0].badge, 'Русская озвучка');
+  assert.notEqual(movieSources[0].badge, 'Без рекламы');
+
+  // 2. TV Series route (Breaking Bad TMDB 1396 S01E01)
+  const tvSources = getEmbedWaveSources({
     tmdbId: 1396,
     type: 'tv',
-    season: 2,
-    episode: 7,
+    season: 1,
+    episode: 1,
     title: 'Breaking Bad'
   });
   assert.equal(tvSources.length, 1);
-  assert.equal(tvSources[0].iframeUrl, 'https://vidsrc.sh/embed/tv/1396/2/7');
+  assert.equal(tvSources[0].name, 'EmbedWave — Cinesrc');
+  assert.equal(tvSources[0].iframeUrl, 'https://embedwave.cc/embed/tv/1396/1/1?server=cinesrc');
+  assert.equal(tvSources[0].season, 1);
+  assert.equal(tvSources[0].episode, 1);
 
-  // 3. When disabled
-  EXTERNAL_SOURCES_CONFIG.vidsrc.enabled = false;
+  // 3. When disabled in config
+  EXTERNAL_SOURCES_CONFIG.embedwave.enabled = false;
   try {
-    const disabledSources = getVidSrcSources({
-      tmdbId: 10331,
-      type: 'movie',
-      title: 'Night of the Living Dead'
-    });
-    assert.equal(disabledSources.length, 1);
-    assert.equal(disabledSources[0].status, 'disabled');
-    assert.equal(disabledSources[0].badge, 'Реклама');
+    const disabled = getEmbedWaveSources({ tmdbId: 550, type: 'movie' });
+    assert.equal(disabled.length, 1);
+    assert.equal(disabled[0].status, 'disabled');
   } finally {
-    EXTERNAL_SOURCES_CONFIG.vidsrc.enabled = true;
+    EXTERNAL_SOURCES_CONFIG.embedwave.enabled = true;
   }
 });
 
-test('External Sources: Kodik adapter handles rate limits, redirect guards, and honest diagnostics', async () => {
+test('External Sources: Preserved Kodik adapter remains disabled by default while API is unavailable', async () => {
   const { getKodikSources } = await import('../src/lib/services/externalSources/kodikAdapter');
 
   const kodikResults = await getKodikSources({
-    tmdbId: 10331,
+    tmdbId: 550,
     type: 'movie',
-    title: 'Night of the Living Dead'
+    title: 'Fight Club'
   });
 
-  assert.ok(kodikResults.length >= 1);
+  assert.equal(kodikResults.length, 1);
   assert.equal(kodikResults[0].adapter, 'kodik');
-  assert.equal(kodikResults[0].type, 'iframe');
+  assert.equal(kodikResults[0].status, 'disabled');
 });
 
-test('External Sources: EzVidAPI adapter generates test embed route when enabled and diagnostics when disabled', async () => {
-  const { getEzVidSources } = await import('../src/lib/services/externalSources/ezvidAdapter');
-  const { EXTERNAL_SOURCES_CONFIG } = await import('../src/lib/services/externalSources/config');
-
-  EXTERNAL_SOURCES_CONFIG.ezvid.enabled = true;
-  const ezvidResults = getEzVidSources({
-    tmdbId: 10331,
-    type: 'movie',
-    title: 'Night of the Living Dead'
-  });
-
-  assert.equal(ezvidResults.length, 1);
-  assert.equal(ezvidResults[0].adapter, 'ezvid');
-  assert.equal(ezvidResults[0].status, 'available');
-  assert.equal(ezvidResults[0].badge, 'EzVidAPI');
-  assert.equal(ezvidResults[0].iframeUrl, 'https://ezvidapi.com/embed/movie/10331');
-
-  // When disabled
-  EXTERNAL_SOURCES_CONFIG.ezvid.enabled = false;
-  try {
-    const disabled = getEzVidSources({
-      tmdbId: 10331,
-      type: 'movie',
-      title: 'Night of the Living Dead'
-    });
-    assert.equal(disabled[0].status, 'disabled');
-    assert.equal(disabled[0].badge, 'На проверке');
-  } finally {
-    EXTERNAL_SOURCES_CONFIG.ezvid.enabled = true;
-  }
-});
-
-test('External Sources API: GET /api/playback/external-sources validates params and aggregates preserved sources', async () => {
+test('External Sources API: GET /api/playback/external-sources returns strictly EmbedWave — Cinesrc without rejected sources', async () => {
   const { GET } = await import('../src/app/api/playback/external-sources/route');
   const { NextRequest } = await import('next/server');
 
@@ -648,87 +623,54 @@ test('External Sources API: GET /api/playback/external-sources validates params 
   const missingJson = await missingRes.json();
   assert.equal(missingJson.error, 'MISSING_PARAM');
 
-  // Valid movie request
-  const movieReq = new NextRequest('http://localhost:3000/api/playback/external-sources?tmdbId=10331&type=movie');
+  // Valid movie request (Fight Club TMDB 550)
+  const movieReq = new NextRequest('http://localhost:3000/api/playback/external-sources?tmdbId=550&type=movie');
   const movieRes = await GET(movieReq);
   assert.equal(movieRes.status, 200);
   const movieJson = await movieRes.json();
   assert.equal(movieJson.success, true);
-  assert.equal(movieJson.tmdbId, 10331);
-  assert.ok(Array.isArray(movieJson.sources));
-  assert.ok(movieJson.sources.some((s: any) => s.adapter === 'vidsrc'));
-  assert.ok(movieJson.sources.some((s: any) => s.adapter === 'kodik'));
-  assert.ok(movieJson.sources.some((s: any) => s.adapter === 'ezvid'));
+  assert.equal(movieJson.tmdbId, 550);
+  assert.equal(movieJson.sources.length, 1);
+  assert.equal(movieJson.sources[0].adapter, 'embedwave');
+  assert.equal(movieJson.sources[0].name, 'EmbedWave — Cinesrc');
+  assert.equal(movieJson.sources[0].iframeUrl, 'https://embedwave.cc/embed/movie/550?server=cinesrc');
+
+  // Ensure none of the rejected adapters are returned in user API
+  assert.equal(movieJson.sources.some((s: any) => s.adapter === 'vidsrc'), false);
+  assert.equal(movieJson.sources.some((s: any) => s.adapter === 'vidlink'), false);
+  assert.equal(movieJson.sources.some((s: any) => s.adapter === 'vidcore'), false);
+  assert.equal(movieJson.sources.some((s: any) => s.adapter === 'vixsrc'), false);
+  assert.equal(movieJson.sources.some((s: any) => s.adapter === 'ezvid'), false);
+  assert.equal(movieJson.sources.some((s: any) => s.adapter === 'kodik'), false);
 });
 
-test('Step 2D: ExternalSourceRegistry registers all 7 candidates with unified schema and honest routes', async () => {
+test('Step 2E: ExternalSourceRegistry reflects iPhone audit (only EmbedWave Cinesrc active, rejected adapters have undefined embedUrl)', async () => {
   const { ExternalSourceRegistry, STEP_2D_PROVIDER_IDS } = await import('../src/lib/services/externalSources');
 
-  // 1. Verify exact 7 candidates
   assert.equal(STEP_2D_PROVIDER_IDS.length, 7);
-  assert.deepEqual(STEP_2D_PROVIDER_IDS, [
-    'embedwave',
-    'vidcore',
-    'vidlink',
-    'vidsrc_hair',
-    'vixsrc',
-    'autoembed',
-    'ezvid'
-  ]);
 
-  // 2. Movie request (Fight Club TMDB 550)
+  // Movie request (Fight Club TMDB 550)
   const movieProviders = ExternalSourceRegistry.getStep2DProviders({
     tmdbId: 550,
     type: 'movie'
   });
   assert.equal(movieProviders.length, 7);
 
-  // EmbedWave
+  // 1. EmbedWave — Cinesrc (Active)
   const embedwave = movieProviders.find((p) => p.id === 'embedwave')!;
   assert.ok(embedwave);
+  assert.equal(embedwave.name, 'EmbedWave — Cinesrc');
   assert.equal(embedwave.availabilityStatus, 'AVAILABLE');
-  assert.equal(embedwave.claimedAdFree, true);
-  assert.equal(embedwave.verifiedAdFree, 'CLAIMED_AD_FREE');
-  assert.equal(embedwave.embedUrl, 'https://embedwave.cc/embed/movie/550');
+  assert.equal(embedwave.embedUrl, 'https://embedwave.cc/embed/movie/550?server=cinesrc');
 
-  // VidCore
-  const vidcore = movieProviders.find((p) => p.id === 'vidcore')!;
-  assert.ok(vidcore);
-  assert.equal(vidcore.availabilityStatus, 'AVAILABLE');
-  assert.equal(vidcore.embedUrl, 'https://vidcore.org/embed/movie/550');
-
-  // VidLink
-  const vidlink = movieProviders.find((p) => p.id === 'vidlink')!;
-  assert.ok(vidlink);
-  assert.equal(vidlink.availabilityStatus, 'AVAILABLE');
-  assert.equal(vidlink.embedUrl, 'https://vidlink.pro/movie/550');
-
-  // VidSrc.hair (DNS down)
-  const vidsrcHair = movieProviders.find((p) => p.id === 'vidsrc_hair')!;
-  assert.ok(vidsrcHair);
-  assert.equal(vidsrcHair.availabilityStatus, 'UNAVAILABLE');
-  assert.equal(vidsrcHair.embedUrl, undefined);
-  assert.match(vidsrcHair.errorReason || '', /NXDOMAIN|не резолвится/);
-
-  // VixSrc
-  const vixsrc = movieProviders.find((p) => p.id === 'vixsrc')!;
-  assert.ok(vixsrc);
-  assert.equal(vixsrc.availabilityStatus, 'AVAILABLE');
-  assert.equal(vixsrc.embedUrl, 'https://vixsrc.to/movie/550');
-
-  // AutoEmbed (DNS down)
-  const autoembed = movieProviders.find((p) => p.id === 'autoembed')!;
-  assert.ok(autoembed);
-  assert.equal(autoembed.availabilityStatus, 'UNAVAILABLE');
-  assert.equal(autoembed.embedUrl, undefined);
-  assert.match(autoembed.errorReason || '', /NXDOMAIN|не резолвится/);
-
-  // EzVidAPI (502 Bad Gateway)
-  const ezvid = movieProviders.find((p) => p.id === 'ezvid')!;
-  assert.ok(ezvid);
-  assert.equal(ezvid.availabilityStatus, 'UNAVAILABLE');
-  assert.equal(ezvid.playbackStatus, 'PLAYBACK_FAILED');
-  assert.match(ezvid.errorReason || '', /502 Bad Gateway/);
+  // 2. All 6 rejected providers must be UNAVAILABLE with undefined embedUrl (preventing ad/broken iframe loads)
+  const rejectedIds = ['vidcore', 'vidlink', 'vidsrc_hair', 'vixsrc', 'autoembed', 'ezvid'] as const;
+  for (const id of rejectedIds) {
+    const provider = movieProviders.find((p) => p.id === id)!;
+    assert.ok(provider, `Provider ${id} must exist in audit registry`);
+    assert.equal(provider.availabilityStatus, 'UNAVAILABLE', `Provider ${id} must be UNAVAILABLE`);
+    assert.equal(provider.embedUrl, undefined, `Provider ${id} must NOT expose an embedUrl`);
+  }
 
   // 3. TV Series request (Breaking Bad TMDB 1396 S1:E1)
   const tvProviders = ExternalSourceRegistry.getStep2DProviders({
@@ -737,17 +679,11 @@ test('Step 2D: ExternalSourceRegistry registers all 7 candidates with unified sc
     season: 1,
     episode: 1
   });
-  const tvVidLink = tvProviders.find((p) => p.id === 'vidlink')!;
-  assert.equal(tvVidLink.embedUrl, 'https://vidlink.pro/tv/1396/1/1');
   const tvEmbedWave = tvProviders.find((p) => p.id === 'embedwave')!;
-  assert.equal(tvEmbedWave.embedUrl, 'https://embedwave.cc/embed/tv/1396/1/1');
-  const tvVidCore = tvProviders.find((p) => p.id === 'vidcore')!;
-  assert.equal(tvVidCore.embedUrl, 'https://vidcore.org/embed/tv/1396/1/1');
-  const tvVixSrc = tvProviders.find((p) => p.id === 'vixsrc')!;
-  assert.equal(tvVixSrc.embedUrl, 'https://vixsrc.to/tv/1396/1/1');
+  assert.equal(tvEmbedWave.embedUrl, 'https://embedwave.cc/embed/tv/1396/1/1?server=cinesrc');
 });
 
-test('Step 2D Providers API: GET /api/playback/providers validates input and returns unified candidate list', async () => {
+test('Step 2E Providers API: GET /api/playback/providers validates input and returns audit list', async () => {
   const { GET } = await import('../src/app/api/playback/providers/route');
   const { NextRequest } = await import('next/server');
 
@@ -769,13 +705,14 @@ test('Step 2D Providers API: GET /api/playback/providers validates input and ret
   assert.equal(json.success, true);
   assert.equal(json.providers.length, 7);
 
-  // Single provider probe
-  const singleReq = new NextRequest('http://localhost:3000/api/playback/providers?tmdbId=550&type=movie&providerId=autoembed');
+  // Single provider check
+  const singleReq = new NextRequest('http://localhost:3000/api/playback/providers?tmdbId=550&type=movie&providerId=embedwave');
   const singleRes = await GET(singleReq);
   assert.equal(singleRes.status, 200);
   const singleJson = await singleRes.json();
   assert.equal(singleJson.success, true);
-  assert.equal(singleJson.provider.id, 'autoembed');
-  assert.equal(singleJson.provider.availabilityStatus, 'UNAVAILABLE');
+  assert.equal(singleJson.provider.id, 'embedwave');
+  assert.equal(singleJson.provider.embedUrl, 'https://embedwave.cc/embed/movie/550?server=cinesrc');
 });
+
 

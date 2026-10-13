@@ -1271,6 +1271,172 @@ test.describe('KinoRoom Player & Playback API E2E', () => {
     await expect(badge).toHaveText('REQUIRES_KEY');
     await expect(page.getByTestId('subdl-status-box')).toContainText('API-ключ SubDL (SUBDL_API_KEY) не настроен');
   });
+
+  test('Step 2F: Automatic Russian Subtitles Cascade: SubDL NOT_FOUND triggers OpenSubtitles REST API v1 fallback', async ({ page }) => {
+    let subdlCallCount = 0;
+    let openSubtitlesCallCount = 0;
+
+    // 1. SubDL returns NOT_FOUND (0 candidates)
+    await page.route('**/api/playback/subtitles/subdl*', async (route) => {
+      subdlCallCount++;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          status: 'NOT_FOUND',
+          configured: true,
+          apiEndpoint: 'https://api.subdl.com/api/v2/subtitles/search',
+          tmdbId: 550,
+          mediaType: 'movie',
+          candidates: [],
+          message: 'Русские субтитры в SubDL не найдены.'
+        })
+      });
+    });
+
+    // 2. OpenSubtitles provides the fallback subtitle
+    await page.route('**/api/playback/subtitles/opensubtitles*', async (route) => {
+      openSubtitlesCallCount++;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          status: 'CONNECTED',
+          configured: true,
+          downloadAllowed: true,
+          apiEndpoint: 'https://api.opensubtitles.com/api/v1',
+          tmdbId: 550,
+          imdbId: 'tt0137523',
+          mediaType: 'movie',
+          candidates: [
+            {
+              id: 'os-cand-550',
+              fileId: 44102,
+              fileName: 'Fight.Club.OpenSubtitles.ru.srt',
+              language: 'ru',
+              release: 'Fight.Club.1999.1080p.BluRay.x264',
+              versionTag: 'BluRay / BDRip',
+              fps: 23.976,
+              fromTrusted: true,
+              isCompatibleVersion: true,
+              isProvisional: false,
+              compatibilityNote: 'Точное соответствие BluRay релиза.',
+              source: 'opensubtitles'
+            }
+          ],
+          bestCandidate: {
+            id: 'os-cand-550',
+            fileId: 44102,
+            fileName: 'Fight.Club.OpenSubtitles.ru.srt',
+            language: 'ru',
+            release: 'Fight.Club.1999.1080p.BluRay.x264',
+            versionTag: 'BluRay / BDRip',
+            fps: 23.976,
+            fromTrusted: true,
+            isCompatibleVersion: true,
+            isProvisional: false,
+            compatibilityNote: 'Точное соответствие BluRay релиза.',
+            source: 'opensubtitles'
+          },
+          autoLoadedSubtitle: {
+            content: `1\n00:00:10,000 --> 00:00:18,000\nРусская реплика из OpenSubtitles v1 fallback.\nВторая строка диалога.\n`,
+            fileName: 'Fight.Club.OpenSubtitles.ru.srt',
+            format: 'srt',
+            cueCount: 1,
+            warnings: [],
+            isProvisional: false,
+            source: 'opensubtitles'
+          },
+          message: 'Найдено 1 вариантов русских субтитров в OpenSubtitles REST API v1.'
+        })
+      });
+    });
+
+    await page.goto('/title/movie/550');
+    await page.locator('button:has-text("Онлайн-источники")').click();
+    await page.getByTestId('external-subtitles-button').click();
+
+    // Verify unified section is visible
+    await expect(page.getByTestId('unified-subtitles-section')).toBeVisible();
+
+    // Verify Active Subtitle Source badge reflects OpenSubtitles fallback
+    const sourceBadge = page.getByTestId('active-subtitle-source-badge');
+    await expect(sourceBadge).toBeVisible();
+    await expect(sourceBadge).toHaveText('[OpenSubtitles]');
+
+    // Verify Russian subtitle option button is enabled with cue count from OpenSubtitles
+    const ruOptionBtn = page.getByTestId('subtitle-option-ru');
+    await expect(ruOptionBtn).toBeEnabled();
+    await expect(ruOptionBtn).toContainText('Русские (1 реплик)');
+
+    // Verify OpenSubtitles status badge is CONNECTED
+    const osBadge = page.getByTestId('opensubtitles-status-badge');
+    await expect(osBadge).toBeVisible();
+    await expect(osBadge).toHaveText('CONNECTED');
+
+    // Verify call counts: SubDL called first, then OpenSubtitles called as fallback
+    expect(subdlCallCount).toBeGreaterThanOrEqual(1);
+    expect(openSubtitlesCallCount).toBeGreaterThanOrEqual(1);
+  });
+
+  test('Step 2F: Automatic Russian Subtitles Cascade: Both SubDL and OpenSubtitles NOT_FOUND honestly shown', async ({ page }) => {
+    // Both providers return NOT_FOUND
+    await page.route('**/api/playback/subtitles/subdl*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          status: 'NOT_FOUND',
+          configured: true,
+          apiEndpoint: 'https://api.subdl.com/api/v2/subtitles/search',
+          tmdbId: 9999999,
+          mediaType: 'movie',
+          candidates: [],
+          message: 'Русские субтитры в SubDL не найдены.'
+        })
+      });
+    });
+
+    await page.route('**/api/playback/subtitles/opensubtitles*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          status: 'NOT_FOUND',
+          configured: true,
+          downloadAllowed: true,
+          apiEndpoint: 'https://api.opensubtitles.com/api/v1',
+          tmdbId: 9999999,
+          mediaType: 'movie',
+          candidates: [],
+          message: 'Русские субтитры для данного релиза в OpenSubtitles REST API v1 не найдены.'
+        })
+      });
+    });
+
+    await page.goto('/title/movie/550');
+    await page.locator('button:has-text("Онлайн-источники")').click();
+    await page.getByTestId('external-subtitles-button').click();
+
+    // Verify SubDL status badge shows NOT_FOUND
+    const subdlBadge = page.getByTestId('subdl-status-badge');
+    await expect(subdlBadge).toBeVisible();
+    await expect(subdlBadge).toHaveText('NOT_FOUND');
+
+    // Verify OpenSubtitles status badge shows NOT_FOUND
+    const osBadge = page.getByTestId('opensubtitles-status-badge');
+    await expect(osBadge).toBeVisible();
+    await expect(osBadge).toHaveText('NOT_FOUND');
+
+    // Verify Russian subtitle option button is disabled
+    const ruOptionBtn = page.getByTestId('subtitle-option-ru');
+    await expect(ruOptionBtn).toBeDisabled();
+    await expect(ruOptionBtn).toContainText('Русские (не загружены)');
+  });
 });
 
 

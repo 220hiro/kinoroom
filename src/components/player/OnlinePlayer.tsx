@@ -124,6 +124,15 @@ export function OnlinePlayer({
   const [subtitleWarnings, setSubtitleWarnings] = useState<string[]>([]);
   const [isProvisionalTrack, setIsProvisionalTrack] = useState<boolean>(false);
 
+  // Step 2F: Unified Russian Subtitles State (SubDL primary with OpenSubtitles fallback)
+  const [activeSubtitleSource, setActiveSubtitleSource] = useState<'subdl' | 'opensubtitles' | 'local' | null>(null);
+  const [activeSubtitleDetails, setActiveSubtitleDetails] = useState<{
+    releaseName?: string;
+    cueCount?: number;
+    sourceLabel?: string;
+  } | null>(null);
+  const [subtitlesAutoLoading, setSubtitlesAutoLoading] = useState<boolean>(false);
+
   // Step 2F: SubDL API v2 Automatic Subtitles state
   const [subdlLoading, setSubdlLoading] = useState<boolean>(false);
   const [subdlResponse, setSubdlResponse] = useState<SubDLSearchResponse | null>(null);
@@ -214,45 +223,52 @@ export function OnlinePlayer({
     };
   }, [tmdbId, imdbId, type, season, episode, title]);
 
-  // Step 2F: SubDL API v2 Automatic Subtitle Search and Download
+  // Step 2F: Unified Russian Subtitles Auto-Fetch (SubDL primary with OpenSubtitles fallback)
   useEffect(() => {
     let isCancelled = false;
 
-    async function autoFetchSubDL() {
+    async function autoFetchSubtitles() {
+      setSubtitlesAutoLoading(true);
       setSubdlLoading(true);
       try {
-        const params = new URLSearchParams({
+        // --- 1. Primary Source: SubDL API v2 ---
+        const subdlParams = new URLSearchParams({
           tmdbId: String(tmdbId),
           type,
           season: String(season),
           episode: String(episode),
           autoDownload: 'true'
         });
-        if (imdbId) params.append('imdbId', imdbId);
+        if (imdbId) subdlParams.append('imdbId', imdbId);
 
-        const res = await fetch(`/api/playback/subtitles/subdl?${params.toString()}`);
-        if (!res.ok) {
-          throw new Error(`Ошибка SubDL API (HTTP ${res.status})`);
+        const subdlRes = await fetch(`/api/playback/subtitles/subdl?${subdlParams.toString()}`);
+        let subdlData: SubDLSearchResponse | null = null;
+        if (subdlRes.ok) {
+          subdlData = await subdlRes.json();
+          if (isCancelled) return;
+          setSubdlResponse(subdlData);
         }
 
-        const data: SubDLSearchResponse = await res.json();
-        if (isCancelled) return;
-        setSubdlResponse(data);
-
-        // If an auto-loaded subtitle is returned, hydrate engine and respect user preference
-        if (data.autoLoadedSubtitle && data.autoLoadedSubtitle.content) {
-          const autoSub = data.autoLoadedSubtitle;
+        // If SubDL returned an auto-loaded subtitle, activate it and finish without querying OpenSubtitles
+        if (subdlData?.autoLoadedSubtitle?.content) {
+          const autoSub = subdlData.autoLoadedSubtitle;
           const parseResult = engineRef.current.loadFromText(autoSub.content, {
             fileName: autoSub.fileName,
-            label: `Русские (${autoSub.fileName})`,
+            label: `Русские [SubDL] (${autoSub.fileName})`,
             lang: 'ru'
           });
 
           if (parseResult.valid && parseResult.track) {
             setLoadedTracks([parseResult.track]);
             setActiveTrackIndex(0);
-            setIsProvisionalTrack(autoSub.isProvisional);
+            setIsProvisionalTrack(Boolean(autoSub.isProvisional));
             setSubtitleWarnings(autoSub.warnings || []);
+            setActiveSubtitleSource('subdl');
+            setActiveSubtitleDetails({
+              releaseName: subdlData.bestCandidate?.releaseName || autoSub.fileName,
+              cueCount: parseResult.track.cues.length,
+              sourceLabel: 'SubDL'
+            });
 
             // Check saved user preference (defaults to 'ru' unless explicitly turned 'off')
             const savedPref = typeof window !== 'undefined' ? localStorage.getItem('kinoroom_subtitle_pref') : null;
@@ -266,20 +282,79 @@ export function OnlinePlayer({
               engineRef.current.updatePlaybackTime(currentTime, { isPaused });
             }
             setActiveLines(engineRef.current.getActiveLines());
+            return;
+          }
+        }
+
+        // --- 2. Secondary Fallback Source: OpenSubtitles REST API v1 ---
+        // Automatically queried only if SubDL returned NOT_FOUND or lacks auto-downloaded subtitles
+        setOsLoading(true);
+        const osParams = new URLSearchParams({
+          tmdbId: String(tmdbId),
+          type,
+          season: String(season),
+          episode: String(episode),
+          autoDownload: 'true'
+        });
+        if (imdbId) osParams.append('imdbId', imdbId);
+        const expectedDur = duration || (runtimeMinutes ? runtimeMinutes * 60 : undefined);
+        if (expectedDur) osParams.append('duration', String(Math.round(expectedDur)));
+
+        const osRes = await fetch(`/api/playback/subtitles/opensubtitles?${osParams.toString()}`);
+        if (osRes.ok) {
+          const osData: OpenSubtitlesSearchResponse = await osRes.json();
+          if (isCancelled) return;
+          setOsResponse(osData);
+
+          if (osData.autoLoadedSubtitle?.content) {
+            const autoSub = osData.autoLoadedSubtitle;
+            const parseResult = engineRef.current.loadFromText(autoSub.content, {
+              fileName: autoSub.fileName,
+              label: `Русские [OpenSubtitles] (${autoSub.fileName})`,
+              lang: 'ru'
+            });
+
+            if (parseResult.valid && parseResult.track) {
+              setLoadedTracks([parseResult.track]);
+              setActiveTrackIndex(0);
+              setIsProvisionalTrack(Boolean(autoSub.isProvisional));
+              setSubtitleWarnings(autoSub.warnings || []);
+              setActiveSubtitleSource('opensubtitles');
+              setActiveSubtitleDetails({
+                releaseName: osData.bestCandidate?.release || autoSub.fileName,
+                cueCount: parseResult.track.cues.length,
+                sourceLabel: 'OpenSubtitles'
+              });
+
+              const savedPref = typeof window !== 'undefined' ? localStorage.getItem('kinoroom_subtitle_pref') : null;
+              if (savedPref !== 'off') {
+                setSubtitleSelection('ru');
+              } else {
+                setSubtitleSelection('off');
+              }
+
+              if (currentTime !== null) {
+                engineRef.current.updatePlaybackTime(currentTime, { isPaused });
+              }
+              setActiveLines(engineRef.current.getActiveLines());
+              return;
+            }
           }
         }
       } catch (err: any) {
         if (!isCancelled) {
-          console.warn('[OnlinePlayer] SubDL auto-search error:', err);
+          console.warn('[OnlinePlayer] Automatic subtitle cascade error:', err);
         }
       } finally {
         if (!isCancelled) {
           setSubdlLoading(false);
+          setOsLoading(false);
+          setSubtitlesAutoLoading(false);
         }
       }
     }
 
-    autoFetchSubDL();
+    autoFetchSubtitles();
 
     return () => {
       isCancelled = true;
@@ -535,6 +610,12 @@ export function OnlinePlayer({
         setActiveTrackIndex(next.length - 1);
         return next;
       });
+      setActiveSubtitleSource('local');
+      setActiveSubtitleDetails({
+        releaseName: file.name,
+        cueCount: parseResult.track.cues.length,
+        sourceLabel: 'Локальный файл'
+      });
       setSubtitleSelection('ru');
       setSubtitleWarnings(parseResult.warnings);
       setActiveLines(engineRef.current.getActiveLines());
@@ -625,7 +706,7 @@ export function OnlinePlayer({
 
       const parseResult = engineRef.current.loadFromText(data.content, {
         fileName: data.fileName || candidate.name,
-        label: `Русские (${candidate.releaseName || candidate.name})`,
+        label: `Русские [SubDL] (${candidate.releaseName || candidate.name})`,
         lang: 'ru'
       });
 
@@ -645,7 +726,13 @@ export function OnlinePlayer({
         return [newTrack, ...filtered];
       });
       setActiveTrackIndex(0);
-      setIsProvisionalTrack(candidate.isProvisional);
+      setIsProvisionalTrack(Boolean(candidate.isProvisional));
+      setActiveSubtitleSource('subdl');
+      setActiveSubtitleDetails({
+        releaseName: candidate.releaseName || candidate.name,
+        cueCount: parseResult.track.cues.length,
+        sourceLabel: 'SubDL'
+      });
       setSubtitleSelection('ru');
       if (typeof window !== 'undefined') {
         localStorage.setItem('kinoroom_subtitle_pref', 'ru');
@@ -715,7 +802,7 @@ export function OnlinePlayer({
 
       const parsed = engineRef.current.loadFromText(data.content, {
         fileName: data.fileName || candidate.fileName,
-        label: `Русские (${candidate.release})`,
+        label: `Русские [OpenSubtitles] (${candidate.release})`,
         lang: 'ru',
         expectedDuration: expectedDur
       });
@@ -732,11 +819,21 @@ export function OnlinePlayer({
 
       const newTrack = parsed.track;
       setLoadedTracks((prev) => {
-        const next = [...prev, newTrack];
-        setActiveTrackIndex(next.length - 1);
+        const next = [newTrack, ...prev.filter((t) => t.fileName !== newTrack.fileName)];
         return next;
       });
+      setActiveTrackIndex(0);
+      setIsProvisionalTrack(Boolean(candidate.isProvisional));
+      setActiveSubtitleSource('opensubtitles');
+      setActiveSubtitleDetails({
+        releaseName: candidate.release || candidate.fileName,
+        cueCount: parsed.track.cues.length,
+        sourceLabel: 'OpenSubtitles'
+      });
       setSubtitleSelection('ru');
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('kinoroom_subtitle_pref', 'ru');
+      }
       setSubtitleWarnings(parsed.warnings);
       setActiveLines(engineRef.current.getActiveLines());
     } catch (err: any) {
@@ -1343,202 +1440,291 @@ export function OnlinePlayer({
             </div>
           </div>
 
-          {/* 4. SubDL API v2 Automatic Russian Subtitles Section */}
+          {/* 4. Unified Russian Subtitles & Multi-source Catalog Section */}
           <div
-            data-testid="subdl-section"
-            className="pt-3 border-t border-white/10 space-y-2.5"
+            data-testid="unified-subtitles-section"
+            className="pt-3 border-t border-white/10 space-y-3"
           >
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <div>
-                <h5 className="text-xs font-bold text-gray-200">
-                  Автоматические русские субтитры (SubDL API v2)
-                </h5>
-                <p className="text-[11px] text-gray-400">
-                  Поиск по TMDB ID ({tmdbId}){type === 'tv' ? ` (S${season}E${episode})` : ''}, авто-распаковка ZIP и синхронизация
-                </p>
-              </div>
-              <button
-                type="button"
-                data-testid="subdl-refresh-button"
-                onClick={handleRefreshSubDL}
-                disabled={subdlLoading}
-                className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-white border border-white/15 text-xs font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-50 self-start sm:self-auto"
-              >
-                {subdlLoading ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <RefreshCw className="w-3.5 h-3.5" />
-                )}
-                <span>Обновить в SubDL</span>
-              </button>
-            </div>
-
-            {subdlResponse && (
-              <div
-                data-testid="subdl-status-box"
-                className="p-3 rounded-xl bg-black/30 border border-white/10 text-xs space-y-2"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-gray-300">{subdlResponse.message}</span>
-                  <span
-                    data-testid="subdl-status-badge"
-                    className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                      subdlResponse.status === 'CONNECTED'
-                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                        : subdlResponse.status === 'REQUIRES_KEY'
-                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                        : 'bg-red-500/20 text-red-300 border border-red-500/30'
-                    }`}
-                  >
-                    {subdlResponse.status}
-                  </span>
+            {/* Active Subtitle Summary Card */}
+            <div
+              data-testid="unified-subtitles-summary-card"
+              className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/10 space-y-2"
+            >
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="space-y-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-bold text-gray-200">Активные субтитры:</span>
+                    {activeSubtitleSource === 'subdl' && (
+                      <span
+                        data-testid="active-subtitle-source-badge"
+                        className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                      >
+                        [SubDL]
+                      </span>
+                    )}
+                    {activeSubtitleSource === 'opensubtitles' && (
+                      <span
+                        data-testid="active-subtitle-source-badge"
+                        className="px-2 py-0.5 rounded text-[10px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/30"
+                      >
+                        [OpenSubtitles]
+                      </span>
+                    )}
+                    {activeSubtitleSource === 'local' && (
+                      <span
+                        data-testid="active-subtitle-source-badge"
+                        className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30"
+                      >
+                        [Локальный файл]
+                      </span>
+                    )}
+                    {isProvisionalTrack && (
+                      <span
+                        data-testid="active-subtitle-provisional-badge"
+                        className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 text-[10px] border border-amber-500/30"
+                      >
+                        [Предв.]
+                      </span>
+                    )}
+                    {subtitlesAutoLoading && (
+                      <span className="flex items-center gap-1.5 text-xs text-gray-400">
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" />
+                        <span>Авто-подбор (SubDL → OpenSubtitles)...</span>
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs text-white font-medium truncate">
+                    {activeSubtitleDetails?.releaseName ||
+                      activeTrack?.fileName ||
+                      (hasLoadedRussianSubtitles
+                        ? 'Русские субтитры синхронизированы'
+                        : !subtitlesAutoLoading && subdlResponse?.status === 'NOT_FOUND' && osResponse?.status === 'NOT_FOUND'
+                        ? 'Субтитры не найдены в SubDL и OpenSubtitles (NOT_FOUND)'
+                        : 'Субтитры не подключены')}
+                  </div>
                 </div>
 
-                {subdlResponse.candidates.length > 0 && (
-                  <div
-                    data-testid="subdl-candidates-list"
-                    className="space-y-1.5 max-h-56 overflow-y-auto pt-1"
-                  >
-                    {subdlResponse.candidates.map((cand, idx) => (
-                      <div
-                        key={cand.id || idx}
-                        data-testid={`subdl-candidate-${idx}`}
-                        className="p-2 rounded-lg bg-white/5 border border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-2"
-                      >
-                        <div className="space-y-0.5 min-w-0">
-                          <div className="font-semibold text-white truncate flex items-center gap-2">
-                            <span>{cand.releaseName || cand.name}</span>
-                            {cand.isProvisional && (
+                <div className="flex items-center gap-2 shrink-0">
+                  {hasLoadedRussianSubtitles && (
+                    <span
+                      data-testid="active-subtitle-cue-count"
+                      className="text-xs text-emerald-400 font-semibold px-2 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20"
+                    >
+                      {activeTrack?.cueCount || activeSubtitleDetails?.cueCount || 0} реплик
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* SubDL API v2 Section */}
+            <div
+              data-testid="subdl-section"
+              className="p-3 rounded-xl bg-black/25 border border-white/10 space-y-2.5"
+            >
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h5 className="text-xs font-bold text-gray-200">
+                    Автоматические русские субтитры (SubDL API v2)
+                  </h5>
+                  <p className="text-[11px] text-gray-400">
+                    Поиск по TMDB ID ({tmdbId}){type === 'tv' ? ` (S${season}E${episode})` : ''}, авто-распаковка ZIP и синхронизация
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  data-testid="subdl-refresh-button"
+                  onClick={handleRefreshSubDL}
+                  disabled={subdlLoading}
+                  className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-white border border-white/15 text-xs font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-50 self-start sm:self-auto"
+                >
+                  {subdlLoading ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <RefreshCw className="w-3.5 h-3.5" />
+                  )}
+                  <span>Обновить в SubDL</span>
+                </button>
+              </div>
+
+              {subdlResponse && (
+                <div
+                  data-testid="subdl-status-box"
+                  className="p-3 rounded-xl bg-black/30 border border-white/10 text-xs space-y-2"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-gray-300">{subdlResponse.message}</span>
+                    <span
+                      data-testid="subdl-status-badge"
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                        subdlResponse.status === 'CONNECTED'
+                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                          : subdlResponse.status === 'REQUIRES_KEY'
+                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                          : 'bg-red-500/20 text-red-300 border border-red-500/30'
+                      }`}
+                    >
+                      {subdlResponse.status}
+                    </span>
+                  </div>
+
+                  {subdlResponse.candidates.length > 0 && (
+                    <div
+                      data-testid="subdl-candidates-list"
+                      className="space-y-1.5 max-h-56 overflow-y-auto pt-1"
+                    >
+                      {subdlResponse.candidates.map((cand, idx) => (
+                        <div
+                          key={cand.id || idx}
+                          data-testid={`subdl-candidate-${idx}`}
+                          className="p-2 rounded-lg bg-white/5 border border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                        >
+                          <div className="space-y-0.5 min-w-0">
+                            <div className="font-semibold text-white truncate flex items-center gap-2">
+                              <span>{cand.releaseName || cand.name}</span>
+                              {cand.isProvisional && (
+                                <span
+                                  data-testid={`subdl-candidate-provisional-${idx}`}
+                                  className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 text-[10px] border border-amber-500/30 shrink-0 font-normal"
+                                >
+                                  Предварительная
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[11px] text-gray-400 flex flex-wrap items-center gap-2">
                               <span
-                                data-testid={`subdl-candidate-provisional-${idx}`}
-                                className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 text-[10px] border border-amber-500/30 shrink-0 font-normal"
+                                className={
+                                  cand.isCompatibleVersion && !cand.isProvisional
+                                    ? 'text-emerald-400 font-medium'
+                                    : 'text-amber-400 font-medium'
+                                }
                               >
-                                Предварительная
+                                {cand.versionTag}
                               </span>
-                            )}
+                              {cand.fps && <span>{cand.fps} FPS</span>}
+                              {cand.downloads !== undefined && (
+                                <span>{cand.downloads} скачиваний</span>
+                              )}
+                              <span className="text-gray-400">{cand.compatibilityNote}</span>
+                            </div>
                           </div>
-                          <div className="text-[11px] text-gray-400 flex flex-wrap items-center gap-2">
-                            <span
-                              className={
-                                cand.isCompatibleVersion && !cand.isProvisional
-                                  ? 'text-emerald-400 font-medium'
-                                  : 'text-amber-400 font-medium'
-                              }
-                            >
-                              {cand.versionTag}
-                            </span>
-                            {cand.fps && <span>{cand.fps} FPS</span>}
-                            {cand.downloads !== undefined && (
-                              <span>{cand.downloads} скачиваний</span>
-                            )}
-                            <span className="text-gray-400">{cand.compatibilityNote}</span>
-                          </div>
+                          <button
+                            type="button"
+                            data-testid={`subdl-candidate-select-btn-${idx}`}
+                            disabled={subdlDownloadingId === cand.id}
+                            onClick={() => handleSelectSubDLCandidate(cand)}
+                            className="px-2.5 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shrink-0"
+                          >
+                            {subdlDownloadingId === cand.id ? 'Загрузка...' : 'Выбрать версию'}
+                          </button>
                         </div>
-                        <button
-                          type="button"
-                          data-testid={`subdl-candidate-select-btn-${idx}`}
-                          disabled={subdlDownloadingId === cand.id}
-                          onClick={() => handleSelectSubDLCandidate(cand)}
-                          className="px-2.5 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shrink-0"
-                        >
-                          {subdlDownloadingId === cand.id ? 'Загрузка...' : 'Выбрать версию'}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* 5. OpenSubtitles REST API v1 Automatic Search Section */}
-          <div
-            data-testid="opensubtitles-section"
-            className="pt-3 border-t border-white/10 space-y-2.5"
-          >
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <div>
-                <h5 className="text-xs font-bold text-gray-200">
-                  Автоматический поиск через OpenSubtitles REST API v1
-                </h5>
-                <p className="text-[11px] text-gray-400">
-                  Поиск по IMDb ID ({imdbId || 'из TMDB'}), языку <code className="text-gray-300">ru</code> и проверка совместимости версии релиза
-                </p>
-              </div>
-              <button
-                type="button"
-                data-testid="opensubtitles-search-button"
-                onClick={handleSearchOpenSubtitles}
-                disabled={osLoading}
-                className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-white border border-white/15 text-xs font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-50 self-start sm:self-auto"
-              >
-                {osLoading ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Search className="w-3.5 h-3.5" />
-                )}
-                <span>Проверить в OpenSubtitles</span>
-              </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
-            {osResponse && (
-              <div
-                data-testid="opensubtitles-status-box"
-                className="p-3 rounded-xl bg-black/30 border border-white/10 text-xs space-y-2"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-gray-300">{osResponse.message}</span>
-                  <span
-                    data-testid="opensubtitles-status-badge"
-                    className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                      osResponse.status === 'CONNECTED'
-                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                        : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                    }`}
-                  >
-                    {osResponse.status}
-                  </span>
+            {/* OpenSubtitles REST API v1 Fallback Section */}
+            <div
+              data-testid="opensubtitles-section"
+              className="p-3 rounded-xl bg-black/25 border border-white/10 space-y-2.5"
+            >
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h5 className="text-xs font-bold text-gray-200">
+                    Автоматический поиск через OpenSubtitles REST API v1
+                  </h5>
+                  <p className="text-[11px] text-gray-400">
+                    Поиск по IMDb ID ({imdbId || 'из TMDB'}), языку <code className="text-gray-300">ru</code> и проверка совместимости версии релиза
+                  </p>
                 </div>
-
-                {osResponse.candidates.length > 0 && (
-                  <div className="space-y-1.5 max-h-44 overflow-y-auto pt-1">
-                    {osResponse.candidates.map((cand) => (
-                      <div
-                        key={cand.id}
-                        className="p-2 rounded-lg bg-white/5 border border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-2"
-                      >
-                        <div className="space-y-0.5 min-w-0">
-                          <div className="font-semibold text-white truncate">{cand.release}</div>
-                          <div className="text-[11px] text-gray-400 flex flex-wrap items-center gap-2">
-                            <span
-                              className={
-                                cand.isCompatibleVersion ? 'text-emerald-400' : 'text-red-400'
-                              }
-                            >
-                              {cand.versionTag}
-                            </span>
-                            {cand.fps && <span>{cand.fps} FPS</span>}
-                            <span>{cand.compatibilityNote}</span>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          disabled={!osResponse.downloadAllowed || !cand.isCompatibleVersion || osDownloadingId === cand.fileId}
-                          onClick={() => handleDownloadOpenSubtitle(cand)}
-                          className="px-2.5 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shrink-0"
-                        >
-                          {osDownloadingId === cand.fileId
-                            ? 'Загрузка...'
-                            : osResponse.downloadAllowed
-                            ? 'Подключить'
-                            : 'Скачивание отключено'}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                <button
+                  type="button"
+                  data-testid="opensubtitles-search-button"
+                  onClick={handleSearchOpenSubtitles}
+                  disabled={osLoading}
+                  className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-white border border-white/15 text-xs font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-50 self-start sm:self-auto"
+                >
+                  {osLoading ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Search className="w-3.5 h-3.5" />
+                  )}
+                  <span>Проверить в OpenSubtitles</span>
+                </button>
               </div>
-            )}
+
+              {osResponse && (
+                <div
+                  data-testid="opensubtitles-status-box"
+                  className="p-3 rounded-xl bg-black/30 border border-white/10 text-xs space-y-2"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-gray-300">{osResponse.message}</span>
+                    <span
+                      data-testid="opensubtitles-status-badge"
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                        osResponse.status === 'CONNECTED'
+                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                          : osResponse.status === 'REQUIRES_KEY'
+                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                          : osResponse.status === 'NOT_FOUND'
+                          ? 'bg-red-500/20 text-red-300 border border-red-500/30'
+                          : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                      }`}
+                    >
+                      {osResponse.status}
+                    </span>
+                  </div>
+
+                  {osResponse.candidates.length > 0 && (
+                    <div className="space-y-1.5 max-h-44 overflow-y-auto pt-1">
+                      {osResponse.candidates.map((cand) => (
+                        <div
+                          key={cand.id}
+                          className="p-2 rounded-lg bg-white/5 border border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                        >
+                          <div className="space-y-0.5 min-w-0">
+                            <div className="font-semibold text-white truncate flex items-center gap-2">
+                              <span>{cand.release}</span>
+                              {cand.isProvisional && (
+                                <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 text-[10px] border border-amber-500/30 shrink-0 font-normal">
+                                  Предварительная
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[11px] text-gray-400 flex flex-wrap items-center gap-2">
+                              <span
+                                className={
+                                  cand.isCompatibleVersion ? 'text-emerald-400' : 'text-red-400'
+                                }
+                              >
+                                {cand.versionTag}
+                              </span>
+                              {cand.fps && <span>{cand.fps} FPS</span>}
+                              <span>{cand.compatibilityNote}</span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            disabled={!osResponse.downloadAllowed || !cand.isCompatibleVersion || osDownloadingId === cand.fileId}
+                            onClick={() => handleDownloadOpenSubtitle(cand)}
+                            className="px-2.5 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shrink-0"
+                          >
+                            {osDownloadingId === cand.fileId
+                              ? 'Загрузка...'
+                              : osResponse.downloadAllowed
+                              ? 'Подключить'
+                              : 'Скачивание отключено'}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

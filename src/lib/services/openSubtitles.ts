@@ -16,7 +16,10 @@
  */
 
 import { metadata } from '@/lib/providers/metadata';
-import { parseExternalSubtitles } from '@/lib/playback/externalSubtitleEngine';
+import {
+  parseExternalSubtitles,
+  decodeSubtitleBuffer
+} from '@/lib/playback/externalSubtitleEngine';
 
 export const OPENSUBTITLES_API_BASE_URL = 'https://api.opensubtitles.com/api/v1';
 
@@ -25,7 +28,8 @@ export type OpenSubtitlesStatus =
   | 'REQUIRES_KEY'
   | 'DOWNLOAD_DISABLED'
   | 'RATE_LIMITED'
-  | 'UNAVAILABLE';
+  | 'UNAVAILABLE'
+  | 'NOT_FOUND';
 
 export interface OpenSubtitlesSearchRequest {
   tmdbId: number;
@@ -34,6 +38,7 @@ export interface OpenSubtitlesSearchRequest {
   season?: number;
   episode?: number;
   expectedDurationSeconds?: number;
+  autoDownload?: boolean;
 }
 
 export interface OpenSubtitlesCandidate {
@@ -60,7 +65,10 @@ export interface OpenSubtitlesCandidate {
   seasonNumber?: number;
   episodeNumber?: number;
   isCompatibleVersion: boolean;
+  isProvisional: boolean;
   compatibilityNote: string;
+  source: 'opensubtitles';
+  downloadUrl?: string;
 }
 
 export interface OpenSubtitlesSearchResponse {
@@ -76,6 +84,16 @@ export interface OpenSubtitlesSearchResponse {
   episode?: number;
   expectedDurationSeconds?: number;
   candidates: OpenSubtitlesCandidate[];
+  bestCandidate?: OpenSubtitlesCandidate;
+  autoLoadedSubtitle?: {
+    content: string;
+    fileName: string;
+    format: 'srt' | 'vtt';
+    cueCount: number;
+    warnings: string[];
+    isProvisional: boolean;
+    source: 'opensubtitles';
+  };
   message: string;
 }
 
@@ -90,6 +108,7 @@ export interface OpenSubtitlesDownloadResponse {
   quotaRemaining?: number;
   quotaResetTime?: string;
   warnings?: string[];
+  isProvisional?: boolean;
   message: string;
 }
 
@@ -109,6 +128,22 @@ export function normalizeImdbId(rawImdbId?: string | null): {
   if (!Number.isFinite(num) || num <= 0) return null;
   const canonical = `tt${match[1].padStart(7, '0')}`;
   return { canonical, numeric: num };
+}
+
+export function isValidOpenSubtitlesDownloadUrl(rawUrl: string): boolean {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== 'https:') return false;
+    const hostname = parsed.hostname.toLowerCase();
+    return (
+      hostname === 'opensubtitles.com' ||
+      hostname.endsWith('.opensubtitles.com') ||
+      hostname === 'opensubtitles.org' ||
+      hostname.endsWith('.opensubtitles.org')
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -132,6 +167,7 @@ export function evaluateSubtitleReleaseCompatibility(params: {
   featureEpisode?: number | null;
 }): {
   isCompatible: boolean;
+  isProvisional: boolean;
   versionTag: string;
   note: string;
 } {
@@ -149,6 +185,7 @@ export function evaluateSubtitleReleaseCompatibility(params: {
   if (!imdbMatches && !tmdbMatches) {
     return {
       isCompatible: false,
+      isProvisional: true,
       versionTag: 'Несовпадение ID',
       note: 'Отклонён: не совпадает IMDb ID / TMDB ID фильма.'
     };
@@ -164,6 +201,7 @@ export function evaluateSubtitleReleaseCompatibility(params: {
     ) {
       return {
         isCompatible: false,
+        isProvisional: true,
         versionTag: `S${params.featureSeason ?? '?'}E${params.featureEpisode ?? '?'}`,
         note: `Отклонён: эпизод S${params.featureSeason}E${params.featureEpisode} не совпадает с запрошенным S${reqS}E${reqE}.`
       };
@@ -174,6 +212,7 @@ export function evaluateSubtitleReleaseCompatibility(params: {
   if (params.foreignPartsOnly) {
     return {
       isCompatible: false,
+      isProvisional: true,
       versionTag: 'Forced / Только надписи',
       note: 'Неполные субтитры (только иностранные реплики и надписи).'
     };
@@ -183,6 +222,7 @@ export function evaluateSubtitleReleaseCompatibility(params: {
   if (/\b(trailer|teaser|sample|workprint|camrip|cam|hdcam|telesync|hdts|telecine)\b/i.test(combined)) {
     return {
       isCompatible: false,
+      isProvisional: true,
       versionTag: 'Trailer / CamRip',
       note: 'Отклонён: релиз относится к трейлеру или экранной копии (несовпадение таймкодов).'
     };
@@ -192,6 +232,7 @@ export function evaluateSubtitleReleaseCompatibility(params: {
   if (/\b(director'?s?[\s._-]*cut|extended|unrated|special[\s._-]*edition|ultimate[\s._-]*cut|imax)\b/i.test(combined)) {
     return {
       isCompatible: true,
+      isProvisional: true,
       versionTag: 'Режиссёрская / Extended версия',
       note: 'Внимание: релиз помечен как Extended / Director’s Cut — может потребоваться коррекция синхронизации (+/-).'
     };
@@ -200,6 +241,7 @@ export function evaluateSubtitleReleaseCompatibility(params: {
   if (/\b(bluray|bdrip|brrip|remux|uhd)\b/i.test(combined)) {
     return {
       isCompatible: true,
+      isProvisional: false,
       versionTag: 'BluRay / BDRip (Театральная)',
       note: 'Стандартный BluRay/BDRip релиз.'
     };
@@ -208,6 +250,7 @@ export function evaluateSubtitleReleaseCompatibility(params: {
   if (/\b(web-?dl|webrip|amzn|nf|dsnp|atvp|hmax)\b/i.test(combined)) {
     return {
       isCompatible: true,
+      isProvisional: false,
       versionTag: 'WEB-DL / WEBRip',
       note: 'Стандартный цифровой WEB-DL/WEBRip релиз.'
     };
@@ -215,26 +258,99 @@ export function evaluateSubtitleReleaseCompatibility(params: {
 
   return {
     isCompatible: true,
+    isProvisional: true,
     versionTag: 'Стандартная версия',
     note: 'Проверено соответствие IMDb/TMDB ID.'
   };
 }
 
 export class OpenSubtitlesProvider {
-  private getApiKey(): string {
+  private searchCache = new Map<string, { timestamp: number; data: OpenSubtitlesSearchResponse }>();
+  private downloadCache = new Map<number, { timestamp: number; data: OpenSubtitlesDownloadResponse }>();
+  private cachedUserToken: { token: string; expiresAt: number } | null = null;
+
+  public getApiKey(): string {
     return (process.env.OPENSUBTITLES_API_KEY || '').trim();
   }
 
-  private getUserToken(): string {
+  public getUsername(): string {
+    return (process.env.OPENSUBTITLES_USERNAME || '').trim();
+  }
+
+  public getPassword(): string {
+    return (process.env.OPENSUBTITLES_PASSWORD || '').trim();
+  }
+
+  public getUserToken(): string {
     return (process.env.OPENSUBTITLES_USER_TOKEN || '').trim();
   }
 
-  private isDownloadPermitted(): boolean {
-    return Boolean(this.getApiKey()) && process.env.OPENSUBTITLES_ALLOW_DOWNLOAD === 'true';
+  public isDownloadPermitted(): boolean {
+    const hasKey = Boolean(this.getApiKey());
+    if (!hasKey) return false;
+    return process.env.OPENSUBTITLES_ALLOW_DOWNLOAD !== 'false';
   }
 
-  private getUserAgent(): string {
+  public getUserAgent(): string {
     return (process.env.OPENSUBTITLES_USER_AGENT || 'KinoRoom v1.0.0').trim();
+  }
+
+  public isConfigured(): boolean {
+    return Boolean(this.getApiKey());
+  }
+
+  /**
+   * Retrieves or acquires a valid Bearer token for OpenSubtitles API calls.
+   * If credentials (username and password) are supplied, automatically logs in
+   * and caches the JWT token in-memory for 23 hours to prevent redundant login calls.
+   */
+  public async getAuthToken(): Promise<string | null> {
+    const directToken = this.getUserToken();
+    if (directToken) return directToken;
+
+    const username = this.getUsername();
+    const password = this.getPassword();
+    const apiKey = this.getApiKey();
+
+    if (!username || !password || !apiKey) {
+      return null;
+    }
+
+    if (this.cachedUserToken && Date.now() < this.cachedUserToken.expiresAt) {
+      return this.cachedUserToken.token;
+    }
+
+    try {
+      const res = await fetch(`${OPENSUBTITLES_API_BASE_URL}/login`, {
+        method: 'POST',
+        headers: {
+          'Api-Key': apiKey,
+          'User-Agent': this.getUserAgent(),
+          'Content-Type': 'application/json',
+          Accept: 'application/json'
+        },
+        body: JSON.stringify({ username, password }),
+        signal: AbortSignal.timeout(8000)
+      });
+
+      if (!res.ok) {
+        console.warn(`[OpenSubtitles] Login returned status ${res.status}`);
+        return null;
+      }
+
+      const data = (await res.json()) as { token?: string };
+      if (data?.token && typeof data.token === 'string') {
+        this.cachedUserToken = {
+          token: data.token,
+          expiresAt: Date.now() + 23 * 60 * 60 * 1000 // 23 hours
+        };
+        return data.token;
+      }
+    } catch (err: any) {
+      console.warn('[OpenSubtitles] Login error:', err?.message || err);
+    }
+
+    return null;
   }
 
   public getConfigurationStatus(): {
@@ -261,7 +377,7 @@ export class OpenSubtitlesProvider {
         configured: true,
         downloadAllowed: false,
         message:
-          'Ключ OPENSUBTITLES_API_KEY задан (доступен поиск релизов), но автоматическое скачивание отключено до подтверждения квот и разрешения (OPENSUBTITLES_ALLOW_DOWNLOAD=true).'
+          'Ключ OPENSUBTITLES_API_KEY задан, но автоматическое скачивание отключено в конфигурации (OPENSUBTITLES_ALLOW_DOWNLOAD=false).'
       };
     }
 
@@ -281,6 +397,13 @@ export class OpenSubtitlesProvider {
     request: OpenSubtitlesSearchRequest
   ): Promise<OpenSubtitlesSearchResponse> {
     const { tmdbId, type, season = 1, episode = 1 } = request;
+    const cacheKey = `${tmdbId}:${type}:${season}:${episode}`;
+
+    const cached = this.searchCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < 60 * 60 * 1000) {
+      return cached.data;
+    }
+
     let resolvedImdbId = request.imdbId;
     let expectedDurationSeconds = request.expectedDurationSeconds;
 
@@ -346,14 +469,15 @@ export class OpenSubtitlesProvider {
         'User-Agent': this.getUserAgent(),
         Accept: 'application/json'
       };
-      if (this.getUserToken()) {
-        headers.Authorization = `Bearer ${this.getUserToken()}`;
+      const authToken = await this.getAuthToken();
+      if (authToken) {
+        headers.Authorization = `Bearer ${authToken}`;
       }
 
       const res = await fetch(url.toString(), {
         method: 'GET',
         headers,
-        signal: AbortSignal.timeout(6000)
+        signal: AbortSignal.timeout(8000)
       });
 
       if (res.status === 429) {
@@ -467,7 +591,10 @@ export class OpenSubtitlesProvider {
           seasonNumber: typeof feat.season_number === 'number' ? feat.season_number : undefined,
           episodeNumber: typeof feat.episode_number === 'number' ? feat.episode_number : undefined,
           isCompatibleVersion: compat.isCompatible,
-          compatibilityNote: compat.note
+          isProvisional: compat.isProvisional,
+          compatibilityNote: compat.note,
+          source: 'opensubtitles',
+          downloadUrl: `${OPENSUBTITLES_API_BASE_URL}/download`
         });
       }
 
@@ -476,15 +603,43 @@ export class OpenSubtitlesProvider {
         if (a.isCompatibleVersion !== b.isCompatibleVersion) {
           return a.isCompatibleVersion ? -1 : 1;
         }
+        if (a.isProvisional !== b.isProvisional) {
+          return a.isProvisional ? 1 : -1;
+        }
         if (a.fromTrusted !== b.fromTrusted) {
           return a.fromTrusted ? -1 : 1;
         }
         return (b.downloadCount || 0) - (a.downloadCount || 0);
       });
 
-      return {
+      const bestCandidate = candidates.find((c) => c.isCompatibleVersion) || candidates[0];
+
+      let autoLoadedSubtitle: OpenSubtitlesSearchResponse['autoLoadedSubtitle'] = undefined;
+      if (request.autoDownload && bestCandidate && configState.downloadAllowed) {
+        try {
+          const dlRes = await this.downloadSubtitle({
+            fileId: bestCandidate.fileId,
+            expectedDurationSeconds
+          });
+          if (dlRes.success && dlRes.content) {
+            autoLoadedSubtitle = {
+              content: dlRes.content,
+              fileName: dlRes.fileName || bestCandidate.fileName,
+              format: dlRes.format || 'srt',
+              cueCount: dlRes.cueCount || 0,
+              warnings: dlRes.warnings || [],
+              isProvisional: bestCandidate.isProvisional,
+              source: 'opensubtitles'
+            };
+          }
+        } catch (dlErr: any) {
+          console.warn('[OpenSubtitles] Auto-download error:', dlErr?.message || dlErr);
+        }
+      }
+
+      const searchResult: OpenSubtitlesSearchResponse = {
         success: true,
-        status: configState.status,
+        status: candidates.length > 0 ? configState.status : 'NOT_FOUND',
         configured: true,
         downloadAllowed: configState.downloadAllowed,
         apiEndpoint: OPENSUBTITLES_API_BASE_URL,
@@ -495,11 +650,16 @@ export class OpenSubtitlesProvider {
         episode: type === 'tv' ? episode : undefined,
         expectedDurationSeconds,
         candidates,
+        bestCandidate,
+        autoLoadedSubtitle,
         message:
           candidates.length > 0
             ? `Найдено ${candidates.length} вариантов русских субтитров в OpenSubtitles REST API v1.`
             : 'Русские субтитры для данного релиза в OpenSubtitles REST API v1 не найдены.'
       };
+
+      this.searchCache.set(cacheKey, { timestamp: Date.now(), data: searchResult });
+      return searchResult;
     } catch (err: any) {
       return {
         success: false,
@@ -522,11 +682,17 @@ export class OpenSubtitlesProvider {
   /**
    * Downloads and validates a specific subtitle file by `fileId` via OpenSubtitles REST API v1,
    * strictly checking API key, download permission flag, active quota, and duration compatibility.
+   * Decodes using decodeSubtitleBuffer to cleanly support UTF-8, UTF-8 BOM, UTF-16, and Windows-1251.
    */
   public async downloadSubtitle(params: {
     fileId: number;
     expectedDurationSeconds?: number;
   }): Promise<OpenSubtitlesDownloadResponse> {
+    const cached = this.downloadCache.get(params.fileId);
+    if (cached && Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) {
+      return cached.data;
+    }
+
     const configState = this.getConfigurationStatus();
     if (!configState.configured) {
       return {
@@ -559,15 +725,16 @@ export class OpenSubtitlesProvider {
         'Content-Type': 'application/json',
         Accept: 'application/json'
       };
-      if (this.getUserToken()) {
-        headers.Authorization = `Bearer ${this.getUserToken()}`;
+      const authToken = await this.getAuthToken();
+      if (authToken) {
+        headers.Authorization = `Bearer ${authToken}`;
       }
 
       const res = await fetch(`${OPENSUBTITLES_API_BASE_URL}/download`, {
         method: 'POST',
         headers,
         body: JSON.stringify({ file_id: params.fileId }),
-        signal: AbortSignal.timeout(6000)
+        signal: AbortSignal.timeout(8000)
       });
 
       if (res.status === 429 || res.status === 406) {
@@ -575,6 +742,14 @@ export class OpenSubtitlesProvider {
           success: false,
           status: 'RATE_LIMITED',
           message: 'Исчерпана дневная квота скачиваний OpenSubtitles API. Загрузите локальный файл .srt/.vtt.'
+        };
+      }
+
+      if (res.status === 401 || res.status === 403) {
+        return {
+          success: false,
+          status: 'REQUIRES_KEY',
+          message: `OpenSubtitles /download отклонил авторизацию (HTTP ${res.status}). Проверьте ключ или логин/пароль.`
         };
       }
 
@@ -604,17 +779,17 @@ export class OpenSubtitlesProvider {
         };
       }
 
-      if (!dlMeta.link || typeof dlMeta.link !== 'string' || !dlMeta.link.startsWith('https://')) {
+      if (!dlMeta.link || typeof dlMeta.link !== 'string' || !isValidOpenSubtitlesDownloadUrl(dlMeta.link)) {
         return {
           success: false,
           status: 'UNAVAILABLE',
-          message: 'OpenSubtitles не вернул защищённую ссылку на скачивание файла.'
+          message: 'OpenSubtitles вернул некорректную или недоверенную ссылку на скачивание файла.'
         };
       }
 
       const fileRes = await fetch(dlMeta.link, {
         method: 'GET',
-        signal: AbortSignal.timeout(6000)
+        signal: AbortSignal.timeout(10000)
       });
       if (!fileRes.ok) {
         return {
@@ -624,7 +799,8 @@ export class OpenSubtitlesProvider {
         };
       }
 
-      const rawText = await fileRes.text();
+      const buffer = await fileRes.arrayBuffer();
+      const rawText = decodeSubtitleBuffer(buffer);
       const parsed = parseExternalSubtitles(rawText, {
         fileName: dlMeta.file_name || `opensubtitles-${params.fileId}.srt`,
         expectedDuration: params.expectedDurationSeconds
@@ -638,7 +814,7 @@ export class OpenSubtitlesProvider {
         };
       }
 
-      return {
+      const dlResult: OpenSubtitlesDownloadResponse = {
         success: true,
         status: 'CONNECTED',
         fileId: params.fileId,
@@ -651,6 +827,9 @@ export class OpenSubtitlesProvider {
         warnings: parsed.warnings,
         message: `Загружено ${parsed.cueCount} реплик из OpenSubtitles.`
       };
+
+      this.downloadCache.set(params.fileId, { timestamp: Date.now(), data: dlResult });
+      return dlResult;
     } catch (err: any) {
       return {
         success: false,

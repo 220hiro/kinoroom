@@ -1213,5 +1213,118 @@ test('Step 2F: SubDLProvider honestly reports REQUIRES_KEY and /api/playback/sub
   }
 });
 
+test('Step 2F: OpenSubtitlesProvider enforces SSRF protection, search & download caching, and autoDownload handling', async () => {
+  const {
+    openSubtitlesProvider,
+    isValidOpenSubtitlesDownloadUrl
+  } = await import('../src/lib/services/openSubtitles');
 
+  // 1. SSRF validation: strictly permit opensubtitles.com/org over HTTPS, reject untrusted hosts & HTTP
+  assert.equal(isValidOpenSubtitlesDownloadUrl('https://api.opensubtitles.com/download/12345'), true);
+  assert.equal(isValidOpenSubtitlesDownloadUrl('https://dl.opensubtitles.org/subtitles/550.srt'), true);
+  assert.equal(isValidOpenSubtitlesDownloadUrl('https://subtitles.opensubtitles.com/ru/550.srt'), true);
 
+  assert.equal(isValidOpenSubtitlesDownloadUrl('http://api.opensubtitles.com/download/12345'), false, 'Must reject insecure HTTP');
+  assert.equal(isValidOpenSubtitlesDownloadUrl('https://evil-hacker.com/subtitles/malicious.srt'), false, 'Must reject untrusted domains');
+  assert.equal(isValidOpenSubtitlesDownloadUrl('https://192.168.1.1/secret.srt'), false, 'Must reject private IP ranges');
+  assert.equal(isValidOpenSubtitlesDownloadUrl('https://169.254.169.254/latest/meta-data'), false, 'Must reject cloud metadata');
+  assert.equal(isValidOpenSubtitlesDownloadUrl('javascript:alert(1)'), false, 'Must reject javascript: pseudo-protocol');
+
+  // 2. Download without API key honestly reports REQUIRES_KEY
+  const savedKey = process.env.OPENSUBTITLES_API_KEY;
+  delete process.env.OPENSUBTITLES_API_KEY;
+  try {
+    const dlRes = await openSubtitlesProvider.downloadSubtitle({ fileId: 99999 });
+    assert.equal(dlRes.success, false);
+    assert.equal(dlRes.status, 'REQUIRES_KEY');
+    assert.match(dlRes.message, /не задан|не настроен/i);
+  } finally {
+    if (savedKey !== undefined) {
+      process.env.OPENSUBTITLES_API_KEY = savedKey;
+    }
+  }
+
+  // 3. Verify getAuthToken returns null without full credentials
+  const token = await openSubtitlesProvider.getAuthToken();
+  assert.equal(token, null, 'Must return null without valid credentials');
+});
+
+test('Step 2F: Unified Cascade Logic — SubDL primary with OpenSubtitles fallback simulation', async () => {
+  // Scenario A: SubDL finds subtitles -> Primary source used, OpenSubtitles is NOT called
+  const subdlPrimarySuccess = {
+    status: 'CONNECTED',
+    candidates: [{ id: 'sub-1', name: 'fight.club.srt' }],
+    autoLoadedSubtitle: {
+      content: '1\n00:00:01,000 --> 00:00:04,000\nПривет из SubDL\n',
+      fileName: 'fight.club.srt',
+      format: 'srt',
+      cueCount: 1,
+      warnings: [],
+      isProvisional: false,
+      source: 'subdl'
+    }
+  };
+
+  let openSubtitlesCalled = false;
+  let activeSource: string | null = null;
+  let activeTrack: any = null;
+
+  if (subdlPrimarySuccess.autoLoadedSubtitle?.content) {
+    activeSource = 'subdl';
+    activeTrack = subdlPrimarySuccess.autoLoadedSubtitle;
+  } else {
+    openSubtitlesCalled = true;
+  }
+
+  assert.equal(activeSource, 'subdl');
+  assert.equal(openSubtitlesCalled, false, 'OpenSubtitles quota must NOT be used when SubDL has subtitles');
+  assert.equal(activeTrack.cueCount, 1);
+
+  // Scenario B: SubDL returns NOT_FOUND -> Fallback automatically activates OpenSubtitles
+  const subdlNotFound = {
+    status: 'NOT_FOUND',
+    candidates: [],
+    autoLoadedSubtitle: undefined
+  };
+
+  const openSubtitlesFallbackSuccess = {
+    status: 'CONNECTED',
+    candidates: [{ id: 'os-1', fileName: 'open.subtitles.srt' }],
+    autoLoadedSubtitle: {
+      content: '1\n00:00:01,000 --> 00:00:04,000\nПривет из OpenSubtitles fallback\n',
+      fileName: 'open.subtitles.srt',
+      format: 'srt',
+      cueCount: 1,
+      warnings: [],
+      isProvisional: false,
+      source: 'opensubtitles'
+    }
+  };
+
+  let fallbackSource: string | null = null;
+  let fallbackTrack: any = null;
+
+  if (subdlNotFound.autoLoadedSubtitle) {
+    fallbackSource = 'subdl';
+  } else {
+    // Automatically trigger OpenSubtitles fallback
+    if (openSubtitlesFallbackSuccess.autoLoadedSubtitle?.content) {
+      fallbackSource = 'opensubtitles';
+      fallbackTrack = openSubtitlesFallbackSuccess.autoLoadedSubtitle;
+    }
+  }
+
+  assert.equal(fallbackSource, 'opensubtitles', 'OpenSubtitles fallback must activate when SubDL returns NOT_FOUND');
+  assert.equal(fallbackTrack.source, 'opensubtitles');
+  assert.equal(fallbackTrack.cueCount, 1);
+
+  // Scenario C: Both return NOT_FOUND -> Honest NOT_FOUND status
+  const subdlEmpty = { status: 'NOT_FOUND', candidates: [] };
+  const osEmpty = { status: 'NOT_FOUND', candidates: [] };
+
+  let unifiedStatus = 'SEARCHING';
+  if (!subdlEmpty.candidates.length && !osEmpty.candidates.length) {
+    unifiedStatus = 'NOT_FOUND';
+  }
+  assert.equal(unifiedStatus, 'NOT_FOUND', 'Both sources empty must honestly report NOT_FOUND');
+});

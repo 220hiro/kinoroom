@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { openSubtitlesProvider } from '@/lib/services/openSubtitles';
 
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
 /**
  * GET /api/playback/subtitles/opensubtitles
  *
@@ -15,6 +18,7 @@ export async function GET(request: NextRequest) {
   const seasonParam = Number(searchParams.get('season') || '1') || 1;
   const episodeParam = Number(searchParams.get('episode') || '1') || 1;
   const durationParam = Number(searchParams.get('duration') || '0') || undefined;
+  const autoDownload = searchParams.get('autoDownload') === 'true';
 
   if (!tmdbIdRaw) {
     return NextResponse.json(
@@ -45,7 +49,8 @@ export async function GET(request: NextRequest) {
     type: typeParam,
     season: typeParam === 'tv' ? seasonParam : undefined,
     episode: typeParam === 'tv' ? episodeParam : undefined,
-    expectedDurationSeconds: durationParam
+    expectedDurationSeconds: durationParam,
+    autoDownload
   });
 
   return NextResponse.json(result, { status: 200 });

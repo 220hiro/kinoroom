@@ -27,6 +27,7 @@ import {
 export const SUBDL_API_BASE_URL = 'https://api.subdl.com';
 export const SUBDL_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour server cache
 export const MAX_SUBDL_DOWNLOAD_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
+export const DEFAULT_SUBDL_KEY = 'subdl_lgX_7ZpsiNeVe-WBtBLz-LvGVne5aSxVSuQOp-VDPcQ';
 
 export type SubDLStatus =
   | 'CONNECTED'
@@ -299,15 +300,18 @@ export class SubDLProvider {
   private cache = new Map<string, CacheEntry>();
 
   /**
-   * Retrieves server API key from process.env.SUBDL_API_KEY.
+   * Retrieves server API key from process.env.SUBDL_API_KEY with built-in server fallback.
    * Never exposed to client bundles.
    */
   public getApiKey(): string | null {
-    const key = process.env.SUBDL_API_KEY;
-    if (!key || typeof key !== 'string' || key.trim().length === 0) {
+    if (process.env.DISABLE_SUBDL_KEY === 'true' || process.env.SUBDL_API_KEY === '') {
       return null;
     }
-    return key.trim();
+    const envKey = process.env.SUBDL_API_KEY;
+    if (envKey && typeof envKey === 'string' && envKey.trim().length > 0) {
+      return envKey.trim();
+    }
+    return DEFAULT_SUBDL_KEY;
   }
 
   public isConfigured(): boolean {

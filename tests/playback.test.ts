@@ -1174,7 +1174,7 @@ test('Step 2F: SubDLProvider honestly reports REQUIRES_KEY and /api/playback/sub
   const { NextRequest } = await import('next/server');
 
   const savedKey = process.env.SUBDL_API_KEY;
-  delete process.env.SUBDL_API_KEY;
+  process.env.SUBDL_API_KEY = '';
   try {
     // 1. Search without API key
     const searchRes = await subdlProvider.searchSubtitles({

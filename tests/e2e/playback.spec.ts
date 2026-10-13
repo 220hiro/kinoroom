@@ -736,6 +736,21 @@ test.describe('KinoRoom Player & Playback API E2E', () => {
   });
 
   test('Step 2F: Russian Subtitles for CineSrc (Fight Club TMDB 550) — upload SRT/VTT, start, pause, seek 10m/30m, track switch, delay offset, and player reset', async ({ page }) => {
+    // Isolate manual upload test by having SubDL return no auto-loaded track
+    await page.route('**/api/playback/subtitles/subdl*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          status: 'NOT_FOUND',
+          configured: true,
+          candidates: [],
+          message: 'Ручная загрузка тестируется отдельно'
+        })
+      });
+    });
+
     // Intercept direct cinesrc.st iframe with a controlled postMessage harness on origin https://cinesrc.st
     // This verifies real cross-origin postMessage validation (event.origin === 'https://cinesrc.st' & event.source === iframe.contentWindow)
     await page.route('https://cinesrc.st/embed/movie/550', async (route) => {

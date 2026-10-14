@@ -31,7 +31,6 @@ export type CineSrcEventType =
   | 'cinesrc:seeking'
   | 'cinesrc:seeked'
   | 'cinesrc:ended'
-  | 'cinesrc:nextepisode'
   | 'cinesrc:loadedmetadata'
   | 'cinesrc:response'
   | 'cinesrc:sourceused'
@@ -132,7 +131,6 @@ export function validateCineSrcMessageEvent(
     case 'cinesrc:play':
     case 'cinesrc:pause':
     case 'cinesrc:ended':
-    case 'cinesrc:nextepisode':
       return {
         type,
         iframeId: context.activeIframeId
@@ -243,23 +241,12 @@ export function sendCineSrcCommand(
     }
   }
 
-  if (command === 'setVolume') {
-    const vol = args[0];
-    if (typeof vol !== 'number' || !Number.isFinite(vol) || vol < 0 || vol > 1) {
-      return false;
-    }
-  }
-
   try {
     targetWindow.postMessage(
       {
         type: 'cinesrc:command',
         command,
-        action: command,
-        args,
-        value: args[0],
-        time: command === 'seek' ? args[0] : undefined,
-        volume: command === 'setVolume' ? args[0] : undefined
+        args
       },
       targetOrigin
     );

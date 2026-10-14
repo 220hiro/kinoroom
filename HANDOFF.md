@@ -33,6 +33,7 @@ Vercel Production: https://kinoroom.vercel.app (СТРОГО НЕ ТРОГАТЬ
    - `SubDLProvider` (`src/lib/services/subdl.ts`): SubDL API v2 с распаковкой ZIP (`fflate`) и автодекодированием кириллицы (UTF-8, UTF-16, Windows-1251 / CP1251).
    - `OpenSubtitlesProvider` (`src/lib/services/openSubtitles.ts`): автоматический fallback при `NOT_FOUND` в SubDL с кэшированием токена (23ч) и запросов, SSRF-защитой.
    - `ExternalSubtitleEngine` (`src/lib/playback/externalSubtitleEngine.ts`): парсер SRT/VTT, санитайзинг, синхронизация по времени, регулировка сдвига `-60..+60с`.
+   - **Безопасность API-ключей**: Все захардкоженные fallback-ключи полностью удалены из кода. Ключи читаются строго из серверных переменных `SUBDL_API_KEY` и `OPENSUBTITLES_API_KEY` (на сервере Vercel/VPS/Docker). При отсутствии ключа честно возвращается статус `REQUIRES_KEY`. Старые ключи из истории Git подлежат отзыву и перевыпуску владельцем.
 5. **Торрент-модуль**:
    - `src/app/torrent/page.tsx`: поиск раздач по трекерам (RuTracker, Rutor, NnmClub).
    - `src/lib/services/torrents.ts` и `src/app/api/torrent/stream/route.ts`: WebTorrent движок со стримингом HTTP 206 Partial Content.

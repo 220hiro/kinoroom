@@ -22,7 +22,6 @@ import {
 } from '@/lib/playback/externalSubtitleEngine';
 
 export const OPENSUBTITLES_API_BASE_URL = 'https://api.opensubtitles.com/api/v1';
-export const DEFAULT_OPENSUBTITLES_KEY = '0qJJfgs3SeCcsLYba9bGx5ZzkjWOdgWa';
 
 export type OpenSubtitlesStatus =
   | 'CONNECTED'
@@ -271,10 +270,11 @@ export class OpenSubtitlesProvider {
   private cachedUserToken: { token: string; expiresAt: number } | null = null;
 
   public getApiKey(): string {
-    if (process.env.OPENSUBTITLES_API_KEY !== undefined) {
-      return process.env.OPENSUBTITLES_API_KEY.trim();
+    const envKey = process.env.OPENSUBTITLES_API_KEY;
+    if (envKey && typeof envKey === 'string') {
+      return envKey.trim();
     }
-    return DEFAULT_OPENSUBTITLES_KEY;
+    return '';
   }
 
   public getUsername(): string {

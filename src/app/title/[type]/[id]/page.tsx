@@ -604,13 +604,13 @@ export default function TitlePage({ params }: TitlePageProps) {
                     </div>
                     <div>
                       <div className="text-white font-bold text-sm flex items-center gap-2">
-                        <span>Доступен торрент-стриминг без рекламы</span>
+                        <span>Доступен торрент-стриминг</span>
                         <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-black">
                           {torrents[0]?.seeds || 0} сидов
                         </span>
                       </div>
                       <p className="text-xs text-gray-300">
-                        Оригинальное 1080p/4K качество, чистый звук и отсутствие любых рекламных окон
+                        Воспроизведение торрент-раздачи в плеере без сторонних баннеров
                       </p>
                     </div>
                   </div>
@@ -667,7 +667,7 @@ export default function TitlePage({ params }: TitlePageProps) {
                   </span>
                 </h3>
                 <p className="text-xs text-gray-400 mt-1">
-                  Сортировка по количеству сидов для быстрого старта и плавной буферизации без рекламы
+                  Сортировка по количеству сидов для стабильной загрузки видеопотока
                 </p>
               </div>
 

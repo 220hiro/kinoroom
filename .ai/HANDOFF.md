@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-10-14  
 Рабочая ветка: `feature/playback-api-player`  
-Базовый коммит очистки: `243a82d` (revert Step 2G) + текущие коммиты документации и стабилизации.  
+Базовый коммит очистки: `243a82d` (revert Step 2G) | Финальный коммит передачи: `31603e9` (очистка секретов и стабилизация).  
 Vercel Preview: https://kinoroom-git-feature-playback-api-player-220-1e06.vercel.app  
 Vercel Production: https://kinoroom.vercel.app (СТРОГО НЕ ТРОГАТЬ)  
 

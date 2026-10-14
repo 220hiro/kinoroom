@@ -1,6 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import type { TorrentSearchResult, TorrentStatus, TorrentFile } from '@/lib/types';
+import { observeTorrent, getTorrentDiagnostics } from './torrentDiagnostics';
 
 // Global torrent client storage to survive Next.js HMR in dev
 declare global {
@@ -186,6 +187,7 @@ export async function getOrAddTorrent(torrentId: string): Promise<any> {
   // Check if already present in client
   const existing = (await client.get(torrentId)) || (formattedId !== torrentId ? await client.get(formattedId) : null);
   if (existing) {
+    observeTorrent(existing);
     if (existing.ready || (existing.files && existing.files.length > 0)) {
       return existing;
     }
@@ -208,7 +210,11 @@ export async function getOrAddTorrent(torrentId: string): Promise<any> {
       const torrent = client.add(formattedId, {
         path: TEMP_DOWNLOAD_DIR,
         destroyStoreOnDestroy: true,
+        // Metadata/status alone must not start downloading the whole release.
+        // Each createReadStream selects its own range and releases it on close.
+        deselect: true,
       });
+      observeTorrent(torrent);
 
       if (torrent.ready || (torrent.files && torrent.files.length > 0)) {
         resolve(torrent);
@@ -240,7 +246,7 @@ export async function getOrAddTorrent(torrentId: string): Promise<any> {
 /**
  * Retrieves structured status for a torrent
  */
-export async function getTorrentStatus(torrentId: string): Promise<TorrentStatus> {
+export async function getTorrentStatus(torrentId: string): Promise<TorrentStatus & { diagnostics?: ReturnType<typeof getTorrentDiagnostics> }> {
   const torrent = await getOrAddTorrent(torrentId);
 
   const files: TorrentFile[] = (torrent.files || []).map((f: any, idx: number) => ({
@@ -261,7 +267,8 @@ export async function getTorrentStatus(torrentId: string): Promise<TorrentStatus
     downloaded: torrent.downloaded || 0,
     total: torrent.length || 0,
     ready: Boolean(torrent.files && torrent.files.length > 0),
-    files
+    files,
+    diagnostics: getTorrentDiagnostics(torrent)
   };
 }
 

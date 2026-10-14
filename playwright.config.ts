@@ -1,5 +1,12 @@
 import { defineConfig, devices } from '@playwright/test';
 
+// Keep E2E on its own production server, separate from the user's dev session/HMR.
+const testPort = Number(process.env.PLAYWRIGHT_PORT || 3002);
+if (!Number.isSafeInteger(testPort) || testPort < 1 || testPort > 65535) {
+  throw new Error('PLAYWRIGHT_PORT must be an integer between 1 and 65535');
+}
+const baseURL = `http://127.0.0.1:${testPort}`;
+
 export default defineConfig({
   testDir: './tests/e2e',
   fullyParallel: false,
@@ -8,7 +15,7 @@ export default defineConfig({
   workers: 1,
   reporter: 'list',
   use: {
-    baseURL: 'http://127.0.0.1:3000',
+    baseURL,
     trace: 'on-first-retry',
     video: 'off',
   },
@@ -23,9 +30,9 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'npm run start',
-    url: 'http://127.0.0.1:3000',
-    reuseExistingServer: true,
+    command: `npm run start -- --port ${testPort}`,
+    url: baseURL,
+    reuseExistingServer: false,
     timeout: 120_000,
   },
 });

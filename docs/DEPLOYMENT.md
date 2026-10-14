@@ -2,6 +2,8 @@
 
 Документ описывает окружения, процесс сборки, переменные окружения и устранение неполадок.
 
+Локальная передача Antigravity (2026-10-14): новый код ещё не закоммичен/не опубликован. Пилот `/torrent-pilot` opt-in через `KINOROOM_HLS_PILOT=1` и всегда запрещён при `VERCEL`; `KINOROOM_HLS_PILOT_PORT` задаёт только loopback backend (default 8092, progressive тест 8094). Portable runtime находится вне Git. Готовые процессы/команды — в ANTIGRAVITY_START.md, ограничения — в HANDOFF.md. Эти локальные процессы не являются новым Preview или Production.
+
 ---
 
 ## 1. Структура веток и окружений
@@ -87,8 +89,8 @@ npm test
 - **Решение**: В production Dockerfile использовать `CMD ["node", "server.js"]`. В `package.json` команда `start` оставлена для локального запуска без standalone.
 
 ### 3. Ошибка Playwright тестов локально
-- **Причина**: Сервер на порту 3000 не запущен или запущен со старым кодом.
-- **Решение**: Запустить `npm run build`, затем `npx playwright test --project=chromium`.
+- **Запуск**: `npm run build`, затем `npx playwright test --project=chromium`. Playwright сам запускает отдельный production-сервер на порту 3002; открытый dev на 3000 не переиспользуется и не останавливается.
+- **Если порт занят**: выбрать свободный через `PLAYWRIGHT_PORT`. Автоматическое переиспользование чужого процесса отключено, чтобы HMR/Strict Mode dev не меняли условия теста.
 
 ### 4. Отсутствуют субтитры SubDL / OpenSubtitles на Vercel
 - **Причина**: Не добавлены переменные `SUBDL_API_KEY` и `OPENSUBTITLES_API_KEY` в настройках Vercel Preview Environment Variables.

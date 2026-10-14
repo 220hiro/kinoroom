@@ -466,7 +466,7 @@ test.describe('KinoRoom Player & Playback API E2E', () => {
     await expect(testButton).toBeVisible();
     await testButton.click();
 
-    await expect(page.locator('text=HTTP 404 SOURCE_UNAVAILABLE')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('HTTP 404 SOURCE_UNAVAILABLE', { exact: true })).toBeVisible({ timeout: 10_000 });
   });
 
   test('Catalog: Tears of Steel (/title/movie/133701) loads KinoRoomPlayer with CC BY 3.0 attribution', async ({ page, browserName }) => {

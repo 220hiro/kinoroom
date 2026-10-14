@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
-import { Readable } from 'node:stream';
+import { parseHttpRange } from '@/lib/playback/httpRange';
 import { getOrAddTorrent, getTorrentVideoFile } from '@/lib/services/torrents';
+import { observeTorrentStream } from '@/lib/services/torrentDiagnostics';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,12 +26,13 @@ function getMimeType(filename: string): string {
   }
 }
 
-function nodeToWebStream(nodeStream: any): ReadableStream {
+function nodeToWebStream(nodeStream: any, diagnostic?: ReturnType<typeof observeTorrentStream>): ReadableStream {
   return new ReadableStream({
     start(controller) {
       nodeStream.on('data', (chunk: any) => {
         try {
           controller.enqueue(chunk);
+          diagnostic?.data(chunk.byteLength);
           if (controller.desiredSize !== null && controller.desiredSize <= 0) {
             nodeStream.pause?.();
           }
@@ -39,9 +41,11 @@ function nodeToWebStream(nodeStream: any): ReadableStream {
         }
       });
       nodeStream.on('end', () => {
+        diagnostic?.finish('ended');
         try { controller.close(); } catch {}
       });
       nodeStream.on('error', (err: any) => {
+        diagnostic?.finish('error');
         try { controller.error(err); } catch {}
       });
     },
@@ -49,12 +53,14 @@ function nodeToWebStream(nodeStream: any): ReadableStream {
       nodeStream.resume?.();
     },
     cancel() {
+      diagnostic?.finish('cancelled');
       nodeStream.destroy?.();
     }
   });
 }
 
 export async function GET(request: NextRequest) {
+  const startedAt = performance.now();
   try {
     const torrentId = request.nextUrl.searchParams.get('torrent');
     if (!torrentId) {
@@ -81,30 +87,24 @@ export async function GET(request: NextRequest) {
       return new Response('No playable video file found in torrent', { status: 404 });
     }
 
-    // Select file for priority sequential download
-    if (typeof file.select === 'function') {
-      file.select();
-    }
-
+    // createReadStream owns the range selection; no persistent whole-file download.
     const total = file.length;
     const rangeHeader = request.headers.get('range');
     const mime = getMimeType(file.name);
 
     if (rangeHeader) {
-      const parts = rangeHeader.replace(/bytes=/, '').split('-');
-      const start = parseInt(parts[0], 10);
-      const end = parts[1] ? parseInt(parts[1], 10) : total - 1;
-
-      if (start >= total || end >= total) {
+      const range = parseHttpRange(rangeHeader, total);
+      if (!range) {
         return new Response('Requested range not satisfiable', {
           status: 416,
           headers: { 'Content-Range': `bytes */${total}` }
         });
       }
-
+      const { start, end } = range;
       const chunkSize = end - start + 1;
       const nodeStream = file.createReadStream({ start, end });
-      const webStream = nodeToWebStream(nodeStream);
+      const diagnostic = observeTorrentStream(torrent, file, start, end, performance.now() - startedAt);
+      const webStream = nodeToWebStream(nodeStream, diagnostic);
 
       return new Response(webStream as any, {
         status: 206,
@@ -119,7 +119,8 @@ export async function GET(request: NextRequest) {
       });
     } else {
       const nodeStream = file.createReadStream();
-      const webStream = nodeToWebStream(nodeStream);
+      const diagnostic = observeTorrentStream(torrent, file, 0, total - 1, performance.now() - startedAt);
+      const webStream = nodeToWebStream(nodeStream, diagnostic);
 
       return new Response(webStream as any, {
         status: 200,

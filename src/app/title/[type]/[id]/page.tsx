@@ -26,6 +26,7 @@ import {
 import { Media, Episode, TorrentSearchResult } from '@/lib/types';
 import { OnlinePlayer } from '@/components/player/OnlinePlayer';
 import { TorrentPlayer } from '@/components/player/TorrentPlayer';
+import { isDeclaredMp4Release } from '@/lib/playback/torrentCompatibility';
 import { KinoRoomPlayer } from '@/components/player/KinoRoomPlayer';
 import { PlaybackResponse } from '@/lib/playback/types';
 import {
@@ -66,9 +67,7 @@ export default function TitlePage({ params }: TitlePageProps) {
     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
   );
 
-  const isMp4Release = (title: string) => {
-    return /(кпк|mp4|avc|iphone|ipad|android|h\.264|web-dlrip-avc|hdtvrip-avc)/i.test(title);
-  };
+  const isMp4Release = isDeclaredMp4Release;
 
   // Torrents state
   const [torrents, setTorrents] = useState<TorrentSearchResult[]>([]);
@@ -167,30 +166,14 @@ export default function TitlePage({ params }: TitlePageProps) {
           (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
         );
 
-        if (isAppleDevice) {
-          // Sort MP4 releases to the top on Apple devices for seamless mobile playback
-          data.sort((a, b) => {
-            const aMp4 = isMp4Release(a.title) ? 1 : 0;
-            const bMp4 = isMp4Release(b.title) ? 1 : 0;
-            if (aMp4 !== bMp4) return bMp4 - aMp4;
-            return b.seeds - a.seeds;
-          });
-        }
+        // Always prioritize releases with the highest number of active seeders for fast buffering
+        data.sort((a, b) => b.seeds - a.seeds);
 
         setTorrents(data);
         if (data.length > 0) {
-          const mp4Candidate = data.find((d) => isMp4Release(d.title));
           setSelectedMagnet((prev) => {
-            // On Apple devices, always select MP4 release if available
-            if (isAppleDevice && mp4Candidate) {
-              const currentTitle = data.find((d) => d.magnet === prev)?.title || '';
-              if (!prev || !isMp4Release(currentTitle)) {
-                return mp4Candidate.magnet;
-              }
-            }
-
             if (prev && data.some((d) => d.magnet === prev)) return prev;
-            return (isAppleDevice && mp4Candidate) ? mp4Candidate.magnet : data[0].magnet;
+            return data[0].magnet;
           });
         }
       }
@@ -636,6 +619,7 @@ export default function TitlePage({ params }: TitlePageProps) {
                   initialTime={savedProgressTime ?? undefined}
                   season={selectedSeason}
                   episode={selectedEpisode}
+                  expectedDuration={media.runtime ? media.runtime * 60 : undefined}
                   onTimeUpdate={handleTimeUpdate}
                   onSwitchToOnline={() => setActiveTab('online')}
                   availableTorrents={torrents}
@@ -721,7 +705,7 @@ export default function TitlePage({ params }: TitlePageProps) {
                     : 'bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white'
                 }`}
               >
-                <span>📱 Для iPhone (MP4)</span>
+                <span>MP4 по названию</span>
               </button>
               <button
                 onClick={() => setTorrentFilter('high_seeds')}
@@ -805,7 +789,7 @@ export default function TitlePage({ params }: TitlePageProps) {
                           {/* MP4 iPhone Badge */}
                           {isMp4Release(t.title) && (
                             <span className="flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-xs font-bold">
-                              <span>📱 MP4 (iPhone)</span>
+                              <span>Заявлен MP4</span>
                             </span>
                           )}
 

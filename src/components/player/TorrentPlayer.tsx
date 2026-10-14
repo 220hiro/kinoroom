@@ -29,6 +29,9 @@ import {
 import { TorrentStatus, TorrentSearchResult } from '@/lib/types';
 import { formatBytes } from '@/lib/utils';
 import { getSettings, saveSettings, AppSettings } from '@/lib/storage';
+import { isDeclaredMp4Release, playbackStartErrorMessage } from '@/lib/playback/torrentCompatibility';
+import { attachPilotVideoDiagnostics } from '@/lib/playback/pilotVideoDiagnostics';
+import { availableMediaDuration, buildPilotSeekStreamSrc, computeTruePlaybackTime } from '@/lib/playback/progressiveHls';
 
 interface TorrentPlayerProps {
   magnet: string;
@@ -40,6 +43,15 @@ interface TorrentPlayerProps {
   onSwitchToOnline?: () => void;
   availableTorrents?: TorrentSearchResult[];
   onSelectTorrent?: (magnet: string) => void;
+  /** Only the explicitly enabled local /torrent-pilot page supplies this. */
+  hlsPilot?: boolean;
+  hlsPilotProgressive?: boolean;
+  expectedDuration?: number;
+}
+
+function extractInfoHash(magnet: string): string | null {
+  const match = /urn:btih:([a-fA-F0-9]{40}|[a-zA-Z2-7]{32})/i.exec(magnet);
+  return match ? match[1].toLowerCase() : null;
 }
 
 /**
@@ -78,7 +90,10 @@ export function TorrentPlayer({
   onTimeUpdate,
   onSwitchToOnline,
   availableTorrents,
-  onSelectTorrent
+  onSelectTorrent,
+  hlsPilot = false,
+  hlsPilotProgressive = false,
+  expectedDuration
 }: TorrentPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -90,6 +105,7 @@ export function TorrentPlayer({
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [seekAnchor, setSeekAnchor] = useState<number>(0);
   const [volume, setVolume] = useState(1);
   const [isMuted, setIsMuted] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -141,6 +157,7 @@ export function TorrentPlayer({
 
   // Load initial settings & query server-side central TorrServer configuration
   useEffect(() => {
+    if (hlsPilot) return;
     // 1. Fetch server-configured TorrServer (single source of truth for all visitors)
     fetch('/api/torrent/torrserver')
       .then((res) => res.json())
@@ -156,18 +173,14 @@ export function TorrentPlayer({
     setSettings(s);
     setTorrServerInput(s.torrServerUrl);
     setUseTorrServerToggle(s.useTorrServer);
-  }, []);
+  }, [hlsPilot]);
 
   // Central server configuration takes precedence so new visitors/friends have TorrServer active out of the box!
-  const isTorrServerActive = Boolean(serverConfig?.configured || settings.useTorrServer);
+  const isTorrServerActive = !hlsPilot && Boolean(serverConfig?.configured || settings.useTorrServer);
   const effectiveTorrServerUrl = serverConfig?.publicUrl || (settings.useTorrServer ? settings.torrServerUrl : '');
 
-  const isMp4Release = (tTitle: string) => {
-    return /(кпк|mp4|avc|iphone|ipad|android|h\.264|web-dlrip-avc|hdtvrip-avc)/i.test(tTitle);
-  };
-
   const mp4Alternative = availableTorrents?.find(
-    (t) => isMp4Release(t.title) && t.magnet !== magnet
+    (t) => isDeclaredMp4Release(t.title) && t.magnet !== magnet
   );
 
   // Reset state when magnet or active server changes
@@ -180,6 +193,7 @@ export function TorrentPlayer({
     setBackendError(null);
     setVideoPlaybackError(null);
     setElapsedSeconds(0);
+    setSeekAnchor(0);
   }, [magnet, isTorrServerActive, effectiveTorrServerUrl]);
 
   // Track elapsed seconds while waiting for metadata
@@ -203,7 +217,9 @@ export function TorrentPlayer({
 
       try {
         let res: Response;
-        if (isTorrServerActive && effectiveTorrServerUrl) {
+        if (hlsPilot) {
+          res = await fetch('/api/torrent/hls-pilot/status');
+        } else if (isTorrServerActive && effectiveTorrServerUrl) {
           res = await fetch('/api/torrent/torrserver', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -219,8 +235,8 @@ export function TorrentPlayer({
 
         if (!res.ok) {
           const errData = await res.json().catch(() => ({}));
-          if (isMounted && isTorrServerActive) {
-            setBackendError(`TorrServer (${effectiveTorrServerUrl}): ${errData.error || res.statusText}`);
+          if (isMounted && (hlsPilot || isTorrServerActive)) {
+            setBackendError(hlsPilot ? 'Локальный тестовый процесс недоступен.' : `TorrServer (${effectiveTorrServerUrl}): ${errData.error || res.statusText}`);
           }
           return;
         }
@@ -261,8 +277,8 @@ export function TorrentPlayer({
           }
         }
       } catch (err: any) {
-        if (isMounted && isTorrServerActive) {
-          setBackendError(`Не удалось связаться с TorrServer (${effectiveTorrServerUrl})`);
+        if (isMounted && (hlsPilot || isTorrServerActive)) {
+          setBackendError(hlsPilot ? 'Локальный тестовый процесс недоступен.' : `Не удалось связаться с TorrServer (${effectiveTorrServerUrl})`);
         }
         console.error('Status poll error:', err);
       } finally {
@@ -281,6 +297,7 @@ export function TorrentPlayer({
     };
   }, [
     magnet,
+    hlsPilot,
     initialFileIndex,
     isIOS,
     season,
@@ -326,7 +343,7 @@ export function TorrentPlayer({
       setCurrentTime(resumePromptTime);
       hasAppliedInitialTimeRef.current = true;
       setResumePromptTime(null);
-      videoRef.current.play().catch(() => {});
+      void requestPlayback();
     }
   };
 
@@ -335,38 +352,131 @@ export function TorrentPlayer({
     setResumePromptTime(null);
   };
 
-  // Video element event listeners
+  // Progressive HLS and timeline duration logic
+  const effectiveInfoHash = status?.infoHash || infoHashRef.current || extractInfoHash(magnet) || 'stream';
+  const hlsSessionId = `${effectiveInfoHash}_${selectedFileIndex}`;
+
+  const isNonMp4 = status?.files?.find((f) => f.index === selectedFileIndex)?.name
+    ? !/\.mp4$/i.test(status.files.find((f) => f.index === selectedFileIndex)!.name)
+    : true; // Default true before status loads so iOS/non-Chromium browsers never attempt raw MKV
+  const isHlsMode = (isIOS || isNonMp4) && !useHlsFallback && Boolean(effectiveInfoHash && effectiveInfoHash !== 'stream');
+  const isProgressiveHls = hlsPilotProgressive || (isHlsMode && !isTorrServerActive);
+  const mediaTotalDuration = Number((status as any)?.pilotSource?.durationSeconds) || expectedDuration || 5400;
+
+  const streamSrc = hlsPilot
+    ? (hlsPilotProgressive ? buildPilotSeekStreamSrc(seekAnchor) : '/api/torrent/hls-pilot/hls/master.m3u8')
+    : isTorrServerActive && effectiveTorrServerUrl
+    ? buildTorrServerStreamUrl({
+        baseUrl: effectiveTorrServerUrl,
+        magnet,
+        fileIndex: selectedFileIndex,
+        infoHash: status?.infoHash || infoHashRef.current,
+        preferHls: isIOS && !useHlsFallback
+      })
+    : isHlsMode
+    ? `/api/torrent/hls/${hlsSessionId}/${seekAnchor > 0 ? `s${seekAnchor}/` : ''}master.m3u8?torrent=${encodeURIComponent(magnet)}&file=${selectedFileIndex}`
+    : `/api/torrent/stream?torrent=${encodeURIComponent(magnet)}&file=${selectedFileIndex}`;
+
+  const effectiveDuration = isProgressiveHls && mediaTotalDuration > 0
+    ? mediaTotalDuration
+    : duration;
+  const effectiveCurrentTime = isProgressiveHls
+    ? computeTruePlaybackTime(currentTime, seekAnchor)
+    : currentTime;
+
+  const currentMediaDuration = () => {
+    const video = videoRef.current;
+    if (!video) return 0;
+    if (!isProgressiveHls) return video.duration || 0;
+    return mediaTotalDuration;
+  };
+
   const handleTimeUpdate = () => {
     if (!videoRef.current) return;
     const cur = videoRef.current.currentTime;
-    const dur = videoRef.current.duration || 0;
     setCurrentTime(cur);
-    setDuration(dur);
-    if (onTimeUpdate) onTimeUpdate(cur, dur);
+    if (!isProgressiveHls) {
+      const dur = videoRef.current.duration || 0;
+      setDuration(dur);
+      if (onTimeUpdate) onTimeUpdate(cur, dur);
+    } else {
+      setDuration(mediaTotalDuration);
+      if (onTimeUpdate) onTimeUpdate(computeTruePlaybackTime(cur, seekAnchor), mediaTotalDuration);
+    }
+  };
+
+  const requestPlayback = async () => {
+    const video = videoRef.current;
+    if (!video) return;
+    setHasStartedPlaying(true);
+    const targetSrc = streamSrc;
+    if (targetSrc && video.getAttribute('src') !== targetSrc) {
+      video.src = targetSrc;
+      video.load();
+    }
+    const source = video.src;
+    setVideoPlaybackError(null);
+    setIsLoadingMetadata(true);
+    try {
+      await video.play();
+    } catch (error) {
+      // A replaced/unmounted source must not receive a stale error from its predecessor.
+      if (videoRef.current !== video || video.src !== source) return;
+      setIsPlaying(false);
+      setIsLoadingMetadata(false);
+      setVideoPlaybackError(playbackStartErrorMessage(error));
+    }
   };
 
   const togglePlay = () => {
     if (!videoRef.current) return;
     if (videoRef.current.paused) {
-      videoRef.current.play();
-      setIsPlaying(true);
-      setHasStartedPlaying(true);
+      // onPlay/onPlaying report actual media state; clicking alone is not playback.
+      void requestPlayback();
     } else {
       videoRef.current.pause();
       setIsPlaying(false);
     }
   };
 
+  const performSeek = (targetTrue: number) => {
+    const video = videoRef.current;
+    if (!video) return;
+    const clamped = Math.max(0, Math.min(effectiveDuration, targetTrue));
+    if (isProgressiveHls) {
+      const offsetInSession = clamped - seekAnchor;
+      const bufferedEnd = video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0;
+      // Seek within current session if target is buffered and non-negative
+      if (offsetInSession >= 0 && offsetInSession <= Math.max(bufferedEnd, 4)) {
+        video.currentTime = offsetInSession;
+        setCurrentTime(offsetInSession);
+      } else {
+        // Cold seek: change session anchor to trigger new stream
+        const newAnchor = Math.floor(clamped);
+        setSeekAnchor(newAnchor);
+        setCurrentTime(0);
+        setIsLoadingMetadata(true);
+      }
+    } else {
+      video.currentTime = clamped;
+      setCurrentTime(clamped);
+    }
+  };
+
   const seekRelative = (seconds: number) => {
     if (!videoRef.current) return;
-    videoRef.current.currentTime = Math.max(0, Math.min(duration, videoRef.current.currentTime + seconds));
+    const currentTrue = isProgressiveHls
+      ? computeTruePlaybackTime(videoRef.current.currentTime, seekAnchor)
+      : videoRef.current.currentTime;
+    performSeek(currentTrue + seconds);
   };
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = parseFloat(e.target.value);
-    if (!videoRef.current) return;
-    videoRef.current.currentTime = val;
-    setCurrentTime(val);
+    performSeek(val);
+    if (videoRef.current && (isPlaying || hasStartedPlaying)) {
+      void videoRef.current.play().catch(() => {});
+    }
   };
 
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -389,19 +499,37 @@ export function TorrentPlayer({
   const toggleFullscreen = () => {
     const video = videoRef.current;
     const container = containerRef.current;
-    if (!container) return;
+    if (!container || !video) return;
+
+    const isIPhone = typeof navigator !== 'undefined' && /iPhone|iPod/.test(navigator.userAgent);
+
+    // On iPhone, Apple ONLY supports webkitEnterFullscreen on the HTMLVideoElement
+    if (isIPhone && typeof (video as any).webkitEnterFullscreen === 'function') {
+      if ((video as any).webkitDisplayingFullscreen) {
+        if (typeof (video as any).webkitExitFullscreen === 'function') {
+          (video as any).webkitExitFullscreen();
+        }
+      } else {
+        try {
+          (video as any).webkitEnterFullscreen();
+        } catch (err) {
+          console.warn('[TorrentPlayer] webkitEnterFullscreen error:', err);
+        }
+      }
+      return;
+    }
 
     const isFs = Boolean(document.fullscreenElement || (document as any).webkitFullscreenElement);
 
     if (!isFs) {
       if (container.requestFullscreen) {
         container.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => {
-          if (video && (video as any).webkitEnterFullscreen) {
+          if (typeof (video as any).webkitEnterFullscreen === 'function') {
             (video as any).webkitEnterFullscreen();
             setIsFullscreen(true);
           }
         });
-      } else if (video && (video as any).webkitEnterFullscreen) {
+      } else if (typeof (video as any).webkitEnterFullscreen === 'function') {
         (video as any).webkitEnterFullscreen();
         setIsFullscreen(true);
       }
@@ -416,16 +544,38 @@ export function TorrentPlayer({
   };
 
   useEffect(() => {
+    const video = videoRef.current;
+
     const onFsChange = () => {
       setIsFullscreen(Boolean(document.fullscreenElement || (document as any).webkitFullscreenElement));
     };
+
+    const onWebkitBegin = () => {
+      setIsFullscreen(true);
+    };
+
+    const onWebkitEnd = () => {
+      setIsFullscreen(false);
+    };
+
     document.addEventListener('fullscreenchange', onFsChange);
     document.addEventListener('webkitfullscreenchange', onFsChange);
+
+    if (video) {
+      video.addEventListener('webkitbeginfullscreen', onWebkitBegin);
+      video.addEventListener('webkitendfullscreen', onWebkitEnd);
+    }
+
     return () => {
       document.removeEventListener('fullscreenchange', onFsChange);
       document.removeEventListener('webkitfullscreenchange', onFsChange);
+      if (video) {
+        video.removeEventListener('webkitbeginfullscreen', onWebkitBegin);
+        video.removeEventListener('webkitendfullscreen', onWebkitEnd);
+      }
     };
   }, []);
+
 
   const handleSpeedSelect = (rate: number) => {
     setPlaybackSpeed(rate);
@@ -506,7 +656,7 @@ export function TorrentPlayer({
   };
 
   const formatTime = (seconds: number) => {
-    if (isNaN(seconds) || seconds <= 0) return '00:00';
+    if (!Number.isFinite(seconds) || seconds <= 0) return '00:00';
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
     const s = Math.floor(seconds % 60);
@@ -516,17 +666,9 @@ export function TorrentPlayer({
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  const isHlsMode = isIOS && !useHlsFallback && Boolean(status?.infoHash || infoHashRef.current);
-
-  const streamSrc = isTorrServerActive && effectiveTorrServerUrl
-    ? buildTorrServerStreamUrl({
-        baseUrl: effectiveTorrServerUrl,
-        magnet,
-        fileIndex: selectedFileIndex,
-        infoHash: status?.infoHash || infoHashRef.current,
-        preferHls: isIOS && !useHlsFallback
-      })
-    : `/api/torrent/stream?torrent=${encodeURIComponent(magnet)}&file=${selectedFileIndex}`;
+  useEffect(() => {
+    if (hlsPilot && videoRef.current) return attachPilotVideoDiagnostics(videoRef.current);
+  }, [hlsPilot]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -547,11 +689,24 @@ export function TorrentPlayer({
 
     const isHlsStream = streamSrc.includes('.m3u8') || streamSrc.includes('/gst/');
 
-    if (isHlsStream && Hls.isSupported()) {
+    // For real torrents, only attach and load stream if user requested playback, is playing, or in pilot mode
+    const shouldLoadMedia = hlsPilot || hasStartedPlaying || isPlaying;
+    if (!shouldLoadMedia) return;
+
+    if (isHlsStream && isIOS && video.canPlayType('application/vnd.apple.mpegurl')) {
+      if (video.getAttribute('src') !== streamSrc) {
+        video.src = streamSrc;
+        video.load();
+      }
+      if (isPlaying || hasStartedPlaying) {
+        void video.play().catch(() => {});
+      }
+    } else if (isHlsStream && Hls.isSupported()) {
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: false,
         backBufferLength: 90,
+        ...(isProgressiveHls ? { startPosition: 0, liveDurationInfinity: false, maxLiveSyncPlaybackRate: 1 } : {}),
       });
       hlsRef.current = hls;
 
@@ -559,6 +714,9 @@ export function TorrentPlayer({
       hls.attachMedia(video);
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        if (isPlaying || hasStartedPlaying) {
+          void video.play().catch(() => {});
+        }
         if (hls.levels && hls.levels.length > 0) {
           const lvls = hls.levels.map((lvl, idx) => ({
             id: idx,
@@ -662,7 +820,7 @@ export function TorrentPlayer({
         hlsRef.current = null;
       }
     };
-  }, [streamSrc]);
+  }, [streamSrc, hasStartedPlaying]);
 
   const handleSelectAudioTrack = (trackId: number) => {
     setSelectedAudioTrack(trackId);
@@ -738,6 +896,8 @@ export function TorrentPlayer({
         ref={videoRef}
         crossOrigin="anonymous"
         onTimeUpdate={handleTimeUpdate}
+        onProgress={() => { if (isProgressiveHls) setDuration(mediaTotalDuration); }}
+        onDurationChange={() => { if (isProgressiveHls) setDuration(mediaTotalDuration); }}
         onPlay={() => {
           setIsPlaying(true);
           setVideoPlaybackError(null);
@@ -813,11 +973,15 @@ export function TorrentPlayer({
           <span className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full bg-red-600/30 text-red-400 font-semibold border border-red-500/30 backdrop-blur-md text-[11px] sm:text-xs">
             <Radio className="w-3 h-3 sm:w-3.5 sm:h-3.5 animate-pulse text-red-500" />
             <span>
-              {isTorrServerActive
+              {hlsPilot
+                ? 'Торрент → HLS'
+                : isTorrServerActive
                 ? isHlsMode
                   ? 'TorrServer HLS'
                   : 'TorrServer'
-                : 'Торрент-поток'}
+                : isHlsMode
+                ? 'Торрент → HLS'
+                : 'WebTorrent Direct'}
             </span>
           </span>
 
@@ -966,8 +1130,8 @@ export function TorrentPlayer({
           <input
             type="range"
             min={0}
-            max={duration || 100}
-            value={currentTime}
+            max={effectiveDuration || 100}
+            value={effectiveCurrentTime}
             onChange={handleSeek}
             className="w-full h-1 sm:h-1.5 bg-white/20 rounded-lg appearance-none cursor-pointer accent-red-600 focus:outline-none"
           />
@@ -1019,9 +1183,9 @@ export function TorrentPlayer({
 
             {/* Time Display */}
             <div className="text-[10px] sm:text-xs text-gray-300 font-mono ml-1 sm:ml-2 whitespace-nowrap">
-              <span>{formatTime(currentTime)}</span>
+              <span>{formatTime(effectiveCurrentTime)}</span>
               <span className="text-gray-500"> / </span>
-              <span>{formatTime(duration)}</span>
+              <span>{formatTime(effectiveDuration)}</span>
             </div>
           </div>
 
@@ -1221,7 +1385,7 @@ export function TorrentPlayer({
             <button
               onClick={toggleFullscreen}
               className="p-1 sm:p-1.5 hover:text-red-500 transition-colors cursor-pointer"
-              title="На весь экран (F)"
+              title={isFullscreen ? "Выйти из полноэкранного режима (F)" : "На весь экран (F)"}
             >
               {isFullscreen ? <Minimize className="w-4 h-4 sm:w-5 sm:h-5" /> : <Maximize className="w-4 h-4 sm:w-5 sm:h-5" />}
             </button>
@@ -1348,7 +1512,7 @@ export function TorrentPlayer({
               setVideoPlaybackError(null);
               if (videoRef.current) {
                 videoRef.current.load();
-                videoRef.current.play().catch(() => {});
+                void requestPlayback();
               }
             }}
             className="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-black font-bold rounded-lg transition-colors cursor-pointer text-xs shrink-0"
@@ -1359,7 +1523,7 @@ export function TorrentPlayer({
       )}
 
       {/* Subtle non-blocking hint for non-MP4 releases on iOS */}
-      {isIOS && status?.files && (() => {
+      {isIOS && !hlsPilot && status?.files && (() => {
         const currentFile = status.files.find((f) => f.index === selectedFileIndex);
         if (currentFile && /\.(avi|mkv|wmv)$/i.test(currentFile.name)) {
           return (
@@ -1372,7 +1536,7 @@ export function TorrentPlayer({
                   onClick={() => onSelectTorrent(mp4Alternative.magnet)}
                   className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg transition-colors cursor-pointer text-xs shrink-0"
                 >
-                  📱 Включить MP4
+                  Попробовать раздачу с пометкой MP4
                 </button>
               )}
             </div>

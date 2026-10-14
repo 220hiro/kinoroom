@@ -2,6 +2,8 @@
 
 Документ фиксирует реальное устройство проекта, пути к файлам и архитектурные контуры для команды разработки и OpenAI Codex.
 
+Актуальное локальное дополнение (2026-10-14): opt-in `/torrent-pilot` использует существующий TorrentPlayer и отдельный worker `scripts/torrent-hls-pilot.mjs`: WebTorrent TCP loopback → bounded HTTP reader → FFmpeg video copy/AAC → fMP4 HLS. Короткий VOD подтверждён на iPhone; progressive 90-минутный fixture подтверждён только в Chrome. Это не основной транспорт и не готовый deep-seek packager. Точное состояние/следующий этап — в HANDOFF.md, ANTIGRAVITY_START.md и docs/STREAMING_DIAGNOSTICS.md.
+
 ---
 
 ## 1. Общая схема потоков данных
@@ -103,7 +105,7 @@ OnlinePlayer / KinoRoomPlayer
 TMDB Title ──► /api/torrent/search ──► Трекеры (RuTracker, Rutor, NnmClub) ──► Список раздач (сиды, размер, качество)
 
 Воспроизведение:
-Выбранный magnet ──► /api/torrent/stream?magnet=...
+Выбранный magnet ──► /api/torrent/stream?torrent=...
                           │
                           ▼
                   WebTorrent Engine (src/lib/services/torrents.ts)
@@ -121,12 +123,14 @@ TMDB Title ──► /api/torrent/search ──► Трекеры (RuTracker, Ru
   - Парсит magnet-ссылки и `.torrent` файлы.
   - Находит наибольший видеофайл в раздаче.
   - Отдаёт поток байтов через `file.createReadStream({ start, end })`.
+  - Новые раздачи добавляются с `deselect: true`: metadata/status не включают постоянную загрузку всех файлов. Диапазоны выбираются самим read stream; при закрытии читателя его выбор снимается. Upload использует ту же политику.
 - **`src/app/api/torrent/stream/route.ts`**:
   - Обрабатывает входящий заголовок `Range` от браузера.
   - Возвращает `HTTP 206 Partial Content` с заголовками `Content-Range`, `Content-Length`, `Accept-Ranges: bytes`.
 - **`src/components/player/TorrentPlayer.tsx`**:
   - Отображает статистику живого роя: число пиров (`peers`), скорость скачивания (`downloadSpeed`), скорость отдачи (`uploadSpeed`), процент буферизации (`downloaded / total`).
   - Предоставляет переключение на другие доступные раздачи.
+  - При включённом TorrServer status идёт через `/api/torrent/torrserver`, а видео напрямую от публичного `/stream` или `/gst` сервера. WebTorrent-политика на этот путь не влияет.
 
 ### Подтверждённые ограничения торрент-архитектуры:
 1. **Несовместимость с Vercel Serverless**:
@@ -136,3 +140,28 @@ TMDB Title ──► /api/torrent/search ──► Трекеры (RuTracker, Ru
    - Задержка первого кадра определяется временем поиска пиров (handshake), получением метаданных торрента и позицией заголовков контейнера (`moov atom` для MP4).
 3. **Аудиодорожки и контейнеры**:
    - Браузерный тег `<video>` нативно воспроизводит видеокодек H.264/AVC и аудиокодеки AAC/MP3. Если в раздаче MKV со звуком AC3/E-AC3 или DTS, звук на клиенте может отсутствовать без серверного транскодирования.
+
+### HLS fMP4 конвейер для реальных торрентов (iOS Safari + MKV/HEVC/AC3)
+Для полной поддержки мобильных Safari iOS и не-MP4 контейнеров (MKV с дорожками AC3/DTS/HEVC) реализован конвейер на лету:
+```
+Magnet/Torrent ──► WebTorrent (deselect: true)
+                         │
+                         ▼
+             readTorrentRangeInWindows (127.0.0.1:0 HTTP)
+                         │
+                         ▼
+             FFmpeg fMP4 HLS Worker (-c:v copy [-tag:v hvc1], -c:a aac)
+                         │
+                         ▼
+             master.m3u8 + init.mp4 + segXXXXX.m4s
+                         │
+                         ▼
+             /api/torrent/hls/[sessionId]/... (Next.js Dynamic Route)
+                         │
+                         ▼
+             TorrentPlayer.tsx (Safari AVPlayer / Hls.js)
+```
+- **Холодная перемотка**: При перемотке за пределы буфера FFmpeg перезапускается с `-ss <seconds>` без скачивания предшествующих гигабайт (чтение только Cues и нужного видеокластера).
+- **FourCC HEVC (hvc1)**: Перед запуском кодек проверяется через `ffprobe`. Для HEVC принудительно задаётся тег `hvc1`, требуемый Apple VideoToolbox.
+- **Нативный Fullscreen**: На iPhone вызывается нативный `video.webkitEnterFullscreen()`, обеспечивающий поворот экрана и скрытие адресной строки Safari.
+

@@ -14,7 +14,8 @@ export async function POST(request: NextRequest) {
     return new Promise<NextResponse>((resolve) => {
       try {
         const torrent = client.add(buffer, {
-          destroyStoreOnDestroy: true
+          destroyStoreOnDestroy: true,
+          deselect: true
         });
 
         // If magnetURI is available or on metadata

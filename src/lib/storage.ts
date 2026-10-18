@@ -90,34 +90,6 @@ export function getWatchProgress(
   );
 }
 
-export type AppSettings = {
-  torrServerUrl: string;
-  useTorrServer: boolean;
-  defaultExternalPlayer: 'vlc' | 'potplayer' | 'none';
-};
-
-const DEFAULT_SETTINGS: AppSettings = {
-  torrServerUrl: 'http://127.0.0.1:8090',
-  useTorrServer: false,
-  defaultExternalPlayer: 'none'
-};
-
-export function getSettings(): AppSettings {
-  if (typeof window === 'undefined') return DEFAULT_SETTINGS;
-  try {
-    const raw = localStorage.getItem(`${STORAGE_PREFIX}settings`);
-    return raw ? { ...DEFAULT_SETTINGS, ...JSON.parse(raw) } : DEFAULT_SETTINGS;
-  } catch {
-    return DEFAULT_SETTINGS;
-  }
-}
-
-export function saveSettings(settings: Partial<AppSettings>) {
-  if (typeof window === 'undefined') return;
-  const current = getSettings();
-  const updated = { ...current, ...settings };
-  localStorage.setItem(`${STORAGE_PREFIX}settings`, JSON.stringify(updated));
-}
 export function getBookmarks(profileId: string): Media[] {
   if (typeof window === 'undefined') return [];
   try {

@@ -30,7 +30,7 @@ export default async function HomePage() {
             </div>
             <div>
               <h3 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
-                Смотрите любой торрент или magnet-ссылку без скачивания
+                Твой фильм. Твой язык. Твой ритм.
                 <Sparkles className="w-4 h-4 text-amber-400" />
               </h3>
               <p className="text-xs sm:text-sm text-gray-300">

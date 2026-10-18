@@ -2,9 +2,9 @@ import type { MetadataRoute } from 'next';
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'КиноРум PRO — Онлайн-кинотеатр',
-    short_name: 'КиноРум PRO',
-    description: 'Приватный онлайн-кинотеатр в стиле Lampa без рекламы с торрент-стримингом и онлайн-балансерами',
+    name: 'КАДР — твой кинозал',
+    short_name: 'КАДР',
+    description: 'Личный кинозал с выбором озвучки и субтитров',
     start_url: '/',
     display: 'standalone',
     background_color: '#090a0f',

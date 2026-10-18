@@ -1,97 +1,50 @@
-# Развертывание и конфигурация KinoRoom (Deployment Guide)
+# КАДР — размещение вне ноутбука
 
-Документ описывает окружения, процесс сборки, переменные окружения и устранение неполадок.
+## Текущее состояние
 
-Локальная передача Antigravity (2026-10-14): новый код ещё не закоммичен/не опубликован. Пилот `/torrent-pilot` opt-in через `KINOROOM_HLS_PILOT=1` и всегда запрещён при `VERCEL`; `KINOROOM_HLS_PILOT_PORT` задаёт только loopback backend (default 8092, progressive тест 8094). Portable runtime находится вне Git. Готовые процессы/команды — в ANTIGRAVITY_START.md, ограничения — в HANDOFF.md. Эти локальные процессы не являются новым Preview или Production.
+Публичный адрес: https://kinoroom.vercel.app. Preview рабочей ветки: https://kinoroom-git-feature-playback-api-player-220-1e06.vercel.app (может требовать входа в Vercel).
 
----
+По запросу владельца от 2026-10-18 готовится публикация КАДР через рабочую ветку feature/playback-api-player. Master не меняется; готовый deployment можно продвинуть в Production через Vercel. Факт завершения и SHA фиксируются в HANDOFF.md.
 
-## 1. Структура веток и окружений
+На Vercel просмотр по умолчанию открывает сохранённый CineSrc. Торрент-плеер становится основным только при включённом внешнем медиаворкере. Ранее работающие торренты использовали локальные TorrServer/Next.js и Cloudflare Quick Tunnel; такая схема не является внешним размещением и не восстанавливается без отдельного запроса использовать ноутбук.
 
-| Окружение | Ветка Git | Назначение | Доступ / URL |
-|---|---|---|---|
-| **Local Dev** | `feature/playback-api-player` | Локальная разработка и отладка | `http://localhost:3000` |
-| **Vercel Preview** | `feature/playback-api-player` | Проверка промежуточных этапов | `https://kinoroom-git-feature-playback-api-player-220-1e06.vercel.app` |
-| **Production** | `master` | Стабильный публичный релиз | `https://kinoroom.vercel.app` |
+Торренты не работают в одиночном Vercel deployment: нужен постоянно работающий backend с TorrServer и FFmpeg. Каталог/CineSrc могут работать отдельно, но это не означает готовность торрент-потока. Не направлять TORRSERVER_URL на ноутбук и не запускать публичные Quick Tunnel.
 
-> ⚠️ **ПРАВИЛО**: Любая разработка ведётся **строго** в ветке `feature/playback-api-player`. Ветки `master` и Production изменять запрещено.
+## Один внешний Docker-хост
 
----
+Нужен Linux-хост с Docker Compose, DNS-именем, доступными 80/443 и исходящим доступом к торрент-сети. CPU должен справляться с H.264 при перемотках; диска должно хватать под временные HLS-кэши одновременных фильмов. Установить лимит KADR_MAX_STREAMS под фактические ресурсы, проверить нагрузку перед приглашением друзей.
 
-## 2. Локальный запуск
+На ВНЕШНЕМ хосте:
 
-### Требования:
-- Node.js: 20.x или 22.x LTS
-- npm: 10.x+
-- Docker (опционально, для запуска локального TorrServer)
-
-### Порядок запуска:
-```bash
-# 1. Установка зависимостей
-npm install
-
-# 2. Подготовка локального окружения
-cp .env.example .env.local
-# Заполнить TMDB_API_KEY и ключи субтитров в .env.local
-
-# 3. Запуск dev-сервера с Turbopack
-npm run dev
-
-# 4. Проверка типов и тестов
-npm run typecheck
-npm test
+```sh
+cp .env.example .env
+# Заполнить DOMAIN, SITE_PASSWORD, AUTH_SECRET, TMDB_API_KEY.
+# AUTH_SECRET: случайное значение длиной не менее 32 символов.
+docker compose --env-file .env up -d --build
 ```
 
----
+Caddy получает доверенный HTTPS-сертификат. Публично открываются только 80/443; TorrServer и Jackett доступны внутри Docker-сети. Стриминг проксируется приложением, секреты в URL браузера не передаются.
 
-## 3. Переменные окружения (Environment Variables)
+Jackett настраивается на внешнем сервере отдельно (рекомендуемый индексатор noname-club); JACKETT_API_KEY не берётся из клиентского JavaScript. При отсутствии Jackett работает поиск через Rutor. Секретные настройки трекеров, пароли и .env в Git не добавлять.
 
-Все переменные должны быть настроены в Vercel Dashboard (Settings → Environment Variables) и в локальном файле `.env.local`:
+FFmpeg включён в production image. Медиаворкеры включаются в Docker Compose через KADR_MEDIA_ENABLED=1. В обычном локальном dev и на Vercel они выключены.
 
-| Имя переменной | Тип | Обязательность | Описание |
-|---|---|---|---|
-| `TMDB_API_KEY` | Серверная | Обязательно | Ключ TMDB API v3 для каталога постеров и метаданных |
-| `TORRSERVER_URL` | Серверная | Опционально | URL инстанса TorrServer (по умолчанию `http://torrserver:8090`) |
-| `AUTH_SECRET` | Серверная | Обязательно | Секретная строка для подписи сессий и куки авторизации |
-| `SUBDL_API_KEY` | Серверная | Рекомендуется | Ключ SubDL API v2 (основной источник автоматических русских субтитров) |
-| `OPENSUBTITLES_API_KEY` | Серверная | Рекомендуется | Ключ OpenSubtitles REST API v1 (резервный источник субтитров) |
-| `OPENSUBTITLES_USERNAME` | Серверная | Опционально | Логин OpenSubtitles для авторизованных аккаунтов |
-| `OPENSUBTITLES_PASSWORD` | Серверная | Опционально | Пароль OpenSubtitles для авторизованных аккаунтов |
+Используется официальный образ ghcr.io/yourok/torrserver; при выпуске реального deployment закрепить проверенный digest образов. Docker-файлы синтаксически проверяются отдельно; запуск всей связки на внешнем хосте не следует объявлять проверенным, пока он не выполнен.
 
-> 🔒 **БЕЗОПАСНОСТЬ**: Ни одна из этих переменных не должна иметь префикс `NEXT_PUBLIC_`. Секреты никогда не передаются в клиентские JS-бандлы.
+## Проверка после размещения
 
----
+1. Войти по SITE_PASSWORD, открыть реальный фильм и его раздачу.
+2. Проверить видео и русский/английский звук на ПК и настоящем Safari iPhone.
+3. Включить встроенные текстовые субтитры, затем выключить, загрузить SRT/VTT.
+4. Перемотать, сменить файл, проверить отсутствие старого звука и правильную позицию.
+5. Открыть один фильм у двух зрителей; смена озвучки не должна влиять на другого.
+6. Проверить CineSrc независимо. Автоматические тесты не считаются проверкой настоящего iPhone.
 
-## 4. Развертывание на Vercel
+## Команды разработки
 
-### Автоматический деплой:
-1. При пуше в ветку `feature/playback-api-player` Vercel GitHub App автоматически запускает сборку Preview.
-2. Процесс сборки выполняет команду:
-   ```bash
-   next build
-   ```
-3. Конфигурация `next.config.ts` использует `output: 'standalone'` и включает `webtorrent` в `serverExternalPackages`.
+npm run typecheck
+npm test
+npm run build
+npx playwright test --project=chromium
 
-### Проверка актуальности Preview:
-1. Всегда проверять, что Vercel завершил сборку коммита.
-2. Проверять соответствие commit SHA в заголовках Vercel или через страницу `/player-test`.
-
----
-
-## 5. Распространённые проблемы и их решения
-
-### 1. Vercel Preview показывает старую версию
-- **Причина**: Кэш CDN или Vercel ещё выполняет сборку.
-- **Решение**: Проверить статус билда в Vercel Dashboard; сбросить кэш браузера (Cmd+Shift+R или инкогнито).
-
-### 2. Ошибка «next start does not work with output: standalone»
-- **Причина**: При `output: 'standalone'` production-сервер запускается через `node .next/standalone/server.js`, а не `next start`.
-- **Решение**: В production Dockerfile использовать `CMD ["node", "server.js"]`. В `package.json` команда `start` оставлена для локального запуска без standalone.
-
-### 3. Ошибка Playwright тестов локально
-- **Запуск**: `npm run build`, затем `npx playwright test --project=chromium`. Playwright сам запускает отдельный production-сервер на порту 3002; открытый dev на 3000 не переиспользуется и не останавливается.
-- **Если порт занят**: выбрать свободный через `PLAYWRIGHT_PORT`. Автоматическое переиспользование чужого процесса отключено, чтобы HMR/Strict Mode dev не меняли условия теста.
-
-### 4. Отсутствуют субтитры SubDL / OpenSubtitles на Vercel
-- **Причина**: Не добавлены переменные `SUBDL_API_KEY` и `OPENSUBTITLES_API_KEY` в настройках Vercel Preview Environment Variables.
-- **Решение**: Добавить ключи в Vercel Project Settings → Environment Variables с областью `Preview` и выполнить Redeploy.
+Браузерные проверки используют временный production-сервер только на loopback и синтетический файл, не торрент-демоны. После проверок сервер останавливается.

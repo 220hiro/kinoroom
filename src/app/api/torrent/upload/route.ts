@@ -1,45 +1,14 @@
+import { requireSession } from '@/lib/serverAuth';
 import { NextRequest, NextResponse } from 'next/server';
-import { getWebTorrentClient } from '@/lib/services/torrents';
-
+import { enrichMagnet } from '@/lib/services/torrentUtils';
 export async function POST(request: NextRequest) {
+  const denied = requireSession(request); if (denied) return denied;
   try {
     const { fileData } = await request.json();
-    if (!fileData) {
-      return NextResponse.json({ error: 'No file data provided' }, { status: 400 });
-    }
-
-    const buffer = Buffer.from(fileData, 'base64');
-    const client = await getWebTorrentClient();
-
-    return new Promise<NextResponse>((resolve) => {
-      try {
-        const torrent = client.add(buffer, {
-          destroyStoreOnDestroy: true,
-          deselect: true
-        });
-
-        // If magnetURI is available or on metadata
-        if (torrent.magnetURI) {
-          resolve(NextResponse.json({ magnet: torrent.magnetURI, infoHash: torrent.infoHash }));
-        } else {
-          torrent.once('metadata', () => {
-            resolve(NextResponse.json({ magnet: torrent.magnetURI, infoHash: torrent.infoHash }));
-          });
-          setTimeout(() => {
-            resolve(
-              NextResponse.json({
-                magnet: torrent.magnetURI || `magnet:?xt=urn:btih:${torrent.infoHash}`,
-                infoHash: torrent.infoHash
-              })
-            );
-          }, 3000);
-        }
-      } catch (err: any) {
-        resolve(NextResponse.json({ error: err.message || 'Failed to parse torrent' }, { status: 500 }));
-      }
-    });
-  } catch (err: any) {
-    console.error('Torrent upload error:', err);
-    return NextResponse.json({ error: err.message || 'Server error' }, { status: 500 });
-  }
+    if (typeof fileData !== 'string' || fileData.length > 3 * 1024 * 1024) return NextResponse.json({ error: 'Файл раздачи слишком большой.' }, { status: 400 });
+    const { default: parseTorrent } = await import('parse-torrent');
+    const parsed = await parseTorrent(Buffer.from(fileData, 'base64'));
+    if (!parsed.infoHash) throw new Error('Invalid torrent');
+    return NextResponse.json({ magnet: enrichMagnet(`magnet:?xt=urn:btih:${parsed.infoHash}`, parsed.announce || []) });
+  } catch { return NextResponse.json({ error: 'Не удалось прочитать .torrent файл.' }, { status: 400 }); }
 }

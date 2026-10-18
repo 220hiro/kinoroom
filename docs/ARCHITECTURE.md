@@ -1,167 +1,38 @@
-# Архитектура KinoRoom (КиноРум)
+# КАДР — архитектура
 
-Документ фиксирует реальное устройство проекта, пути к файлам и архитектурные контуры для команды разработки и OpenAI Codex.
+## Два независимых пути просмотра
 
-Актуальное локальное дополнение (2026-10-14): opt-in `/torrent-pilot` использует существующий TorrentPlayer и отдельный worker `scripts/torrent-hls-pilot.mjs`: WebTorrent TCP loopback → bounded HTTP reader → FFmpeg video copy/AAC → fMP4 HLS. Короткий VOD подтверждён на iPhone; progressive 90-минутный fixture подтверждён только в Chrome. Это не основной транспорт и не готовый deep-seek packager. Точное состояние/следующий этап — в HANDOFF.md, ANTIGRAVITY_START.md и docs/STREAMING_DIAGNOSTICS.md.
+1. Каталог → выбранная раздача → TorrentPlayer (один HTML5 video).
+2. Существующий OnlinePlayer / EmbedWave / CineSrc. Его реализация и мост postMessage сохранены без изменений.
 
----
+Прежние VLC/WASM, лаборатории, демонстрационные плееры и переключатель «Прямой поток» удалены.
 
-## 1. Общая схема потоков данных
+## Торрент-просмотр
 
-```
-Пользователь (Браузер)
-  ├── 1. Навигация и Каталог ──► TMDB API v3 ──► Каталог / Карточка фильма
-  │
-  ├── 2. Воспроизведение видео:
-  │     ├── [Нативный HLS] ──► /api/playback/resolve ──► KinoRoomPlayer (Hls.js)
-  │     ├── [Торрент-поток] ──► /api/torrent/stream (206 Partial Content) ──► TorrentPlayer
-  │     └── [Внешний fallback] ──► EmbedWave (cinesrc) ──► OnlinePlayer
-  │
-  └── 3. Автоматические субтитры:
-        ├── SubDL API v2 (основной) ──► /api/playback/subtitles/subdl
-        └── OpenSubtitles v1 (резервный) ──► /api/playback/subtitles/opensubtitles
-              └──► ExternalSubtitleEngine (SRT/VTT, UTF-8/CP1251, -60..+60с) ──► React оверлей
-```
+Внешний постоянно работающий хост запускает Next.js, FFmpeg/FFprobe, TorrServer и при необходимости Jackett. Ноутбук владельца не является медиасервером.
 
----
+- Поиск: Jackett/NNM-Club, резервный Rutor; сохранены фильтры релизов и непрозрачные ссылки .torrent.
+- POST /api/torrent/playback: разрешает magnet/torrent-ref через серверный TorrServer, выбирает реальный файл, зондирует длительность и дорожки, выдаёт случайный ID сессии.
+- Для многосерийной раздачи без точного совпадения серии предлагается явный выбор файла.
+- У каждого зрителя отдельная сессия и FFmpeg. Смена дорожки одного зрителя не перезапускает другого.
+- /api/torrent/playback/<session>/index.m3u8?audio=...&seek=...&revision=...: HLS с AAC stereo. Совместимое H.264/HEVC на старте копируется; неподдерживаемое видео и холодная перемотка кодируются в H.264. На перемотке оба потока проходят accurate seek, чтобы не смешивать видео с предшествующего ключевого кадра и звук с целевой позиции.
+- Старые запросы плейлиста с предыдущей revision не могут вернуть старую озвучку.
+- Плейлист EVENT растёт и заканчивается ENDLIST. Интерфейс показывает длительность исходного фильма и собственный таймлайн, а не LIVE. Данные на сервере временные и удаляются с сессией; свободное место должно покрывать кэш просматриваемых фильмов.
+- Лимит одновременных сессий KADR_MAX_STREAMS; неактивные сессии завершаются через 3 минуты. Смена файла/раздачи и размонтирование закрывают текущую сессию.
+- HLS.js в совместимых браузерах; нативный HLS в Safari. На iPhone только playsInline, без вызовов системного fullscreen, перекидывания между движками и CSS-кинотеатра.
 
-## 2. Контур метаданных и страниц
+## Озвучки и субтитры
 
-- **`src/lib/providers/metadata.ts`**: Серверный клиент TMDB API v3. Запрашивает детали фильма/сериала (`/movie/{id}`, `/tv/{id}`), постеры, кадры, списки сезонов и серий.
-- **`src/app/page.tsx`**: Главная страница — баннер популярного фильма (`HeroBanner`), карусели трендов (`MediaCarousel`), блок «Продолжить просмотр» (`ContinueWatching`).
-- **`src/app/catalog/page.tsx`**: Каталог с фильтрами по жанрам, годам и сортировкой.
-- **`src/app/search/page.tsx`**: Поиск по каталогу TMDB.
-- **`src/app/bookmarks/page.tsx`**: Закладки пользователя (хранятся локально в `localStorage` через `src/lib/storage.ts`).
-- **`src/app/title/[type]/[id]/page.tsx`**: Главная точка выбора просмотра. Предоставляет вкладки:
-  1. **«Плеер КиноРум»** (нативный HLS через Playback API).
-  2. **«Торренты»** (список найденных раздач + стриминг в `TorrentPlayer`).
-  3. **«Онлайн-источники»** (внешний `OnlinePlayer`).
+Названия озвучек берутся только из ffprobe metadata. Заявления трекера о дубляже не подменяют проверенные дорожки.
 
----
+Текстовые субтитры MKV (SRT/ASS/SSA/WebVTT/mov_text) извлекаются FFmpeg окнами до 5 минут и передаются обычному video track в WebVTT. Тайминги учитывают позицию нового HLS-потока. Графические PGS/VobSub помечены неподдерживаемыми; их OCR/вжигание не имитируется. Можно загрузить свой SRT/VTT до 5 МБ, включая CP1251. «Выключены» остаются выключенными.
 
-## 3. Контур воспроизведения: Playback API и KinoRoomPlayer
+Существующий каскад SubDL/OpenSubtitles и его интерфейс CineSrc сохранены. Автоматический поиск внешних субтитров не добавлен к торрент-плееру.
 
-```
-TMDB ID ──► POST /api/playback/resolve ──► PlaybackRegistry
-                                                 ├── OpenMediaProvider (CC-BY / Public Domain)
-                                                 ├── DemoLicensedProvider (Tears of Steel, Big Buck Bunny)
-                                                 └── Unmatched ID ──► HTTP 404 SOURCE_UNAVAILABLE
-```
+## Доступ и конфигурация
 
-- **`src/app/api/playback/resolve/route.ts`**: Принимает `{ mediaId, mediaType, season, episode, translationId }`. Валидирует схему через Zod (`PlaybackRequestSchema`).
-- **`src/lib/playback/registry.ts`** (`PlaybackRegistry`):
-  - Опрашивает зарегистрированные провайдеры открытых лицензированных потоков (`OpenMediaProvider`, `DemoLicensedProvider`).
-  - **Честность каталога**: Если коммерческий фильм не имеет проверенного лицензионного стрима, API строго возвращает `HTTP 404 SOURCE_UNAVAILABLE`. Подмена коммерческого фильма демонстрационным роликом запрещена.
-- **`src/components/player/KinoRoomPlayer.tsx`**:
-  - Нативный плеер на базе HTML5 Video + `hls.js`.
-  - Кастомные контролы: Play/Pause, перемотка на 10с, таймлайн, регулятор звука, полноэкранный режим.
-  - Поддержка переключения звуковых дорожек и WebVTT субтитров.
+В публичной Docker-конфигурации обязательны SITE_PASSWORD и AUTH_SECRET (не менее 32 символов). Сессия входа подписывается HMAC; старое значение cookie authorized не принимается. Торрент-API проверяют вход. Адрес и авторизация TorrServer остаются серверными, клиент не выбирает произвольный backend URL.
 
----
+Медиаворкеры по умолчанию выключены. KADR_MEDIA_ENABLED=1 включается только на внешнем хосте, на Vercel всегда запрещён. Нет автоматического запуска WebTorrent, поиска FFmpeg в старых пилотах или fallback на localhost владельца.
 
-## 4. Контур автоматических субтитров
-
-```
-OnlinePlayer / KinoRoomPlayer
-       │
-       ▼
-1. Запрос к SubDL v2 ──► /api/playback/subtitles/subdl ──► subdl.com/api/v2
-       │
-       ├── Найдено? ──► [ДА] ──► Распаковка ZIP (fflate) ──► Декодирование (UTF-8/CP1251)
-       │
-       └── [НЕТ / NOT_FOUND]
-             │
-             ▼
-2. Запрос к OpenSubtitles v1 ──► /api/playback/subtitles/opensubtitles ──► api.opensubtitles.com/api/v1
-             │
-             └── Найдено? ──► [ДА] ──► Скачивание по HTTPS (SSRF allowlist)
-                                  │
-                                  ▼
-3. ExternalSubtitleEngine ──► Парсинг SRT/VTT ──► Синхронизация по времени плеера ──► React оверлей
-```
-
-- **`src/lib/services/subdl.ts`** (`SubDLProvider`):
-  - Поиск по TMDB ID, IMDb ID, типу, сезону и серии через официальный SubDL API v2.
-  - Распаковка архивов `.zip` в памяти через `fflate`.
-  - Декодирование UTF-8, UTF-8 BOM, UTF-16LE/BE и Windows-1251 (CP1251) через `decodeSubtitleBuffer`.
-  - Серверный API-ключ защищён в переменной `SUBDL_API_KEY`.
-- **`src/lib/services/openSubtitles.ts`** (`OpenSubtitlesProvider`):
-  - Автоматический fallback при `NOT_FOUND` в SubDL.
-  - Авторизация через `POST /login` с in-memory кэшированием JWT токена на 23 часа.
-  - In-memory кэш поисков (1 час) и скачиваний (24 часа) для защиты от лимитов `429 Too Many Requests`.
-  - Защита от SSRF (`isValidOpenSubtitlesDownloadUrl`): разрешены только HTTPS запросы к доменам `*.opensubtitles.com` и `*.opensubtitles.org`.
-- **`src/lib/playback/externalSubtitleEngine.ts`** (`ExternalSubtitleEngine`):
-  - Парсинг таймкодов SRT (`00:01:23,456`) и WebVTT (`00:01:23.456`).
-  - Санитайзинг текста (удаление тегов форматирования и XSS).
-  - Поиск активных реплик по текущему таймкоду.
-  - Ручной сдвиг таймингов от `-60.0` до `+60.0` секунд с шагом 0.5с.
-
----
-
-## 5. Торрент-контур: WebTorrent и TorrServer
-
-```
-Поиск торрентов:
-TMDB Title ──► /api/torrent/search ──► Трекеры (RuTracker, Rutor, NnmClub) ──► Список раздач (сиды, размер, качество)
-
-Воспроизведение:
-Выбранный magnet ──► /api/torrent/stream?torrent=...
-                          │
-                          ▼
-                  WebTorrent Engine (src/lib/services/torrents.ts)
-                          │
-                          ├── Подключение к пирам (TCP/uTP/WebRTC)
-                          ├── Выбор видеофайла (.mp4 / .mkv)
-                          └── Стриминг: HTTP 206 Partial Content (Range: bytes=start-end)
-                                  │
-                                  ▼
-                          TorrentPlayer.tsx (HTML5 <video>)
-```
-
-- **`src/lib/services/torrents.ts`**:
-  - Инициализирует инстанс WebTorrent (`new WebTorrent()`).
-  - Парсит magnet-ссылки и `.torrent` файлы.
-  - Находит наибольший видеофайл в раздаче.
-  - Отдаёт поток байтов через `file.createReadStream({ start, end })`.
-  - Новые раздачи добавляются с `deselect: true`: metadata/status не включают постоянную загрузку всех файлов. Диапазоны выбираются самим read stream; при закрытии читателя его выбор снимается. Upload использует ту же политику.
-- **`src/app/api/torrent/stream/route.ts`**:
-  - Обрабатывает входящий заголовок `Range` от браузера.
-  - Возвращает `HTTP 206 Partial Content` с заголовками `Content-Range`, `Content-Length`, `Accept-Ranges: bytes`.
-- **`src/components/player/TorrentPlayer.tsx`**:
-  - Отображает статистику живого роя: число пиров (`peers`), скорость скачивания (`downloadSpeed`), скорость отдачи (`uploadSpeed`), процент буферизации (`downloaded / total`).
-  - Предоставляет переключение на другие доступные раздачи.
-  - При включённом TorrServer status идёт через `/api/torrent/torrserver`, а видео напрямую от публичного `/stream` или `/gst` сервера. WebTorrent-политика на этот путь не влияет.
-
-### Подтверждённые ограничения торрент-архитектуры:
-1. **Несовместимость с Vercel Serverless**:
-   - Vercel Serverless функции имеют жёсткий таймаут (10–60 сек) и не поддерживают постоянные TCP/UDP P2P-соединения с пирами торрент-роя.
-   - Полноценный торрент-стриминг работает только при локальном запуске (Node.js сервер) или на выделенном VPS сервере (Docker Compose с TorrServer).
-2. **Время старта и буферизация**:
-   - Задержка первого кадра определяется временем поиска пиров (handshake), получением метаданных торрента и позицией заголовков контейнера (`moov atom` для MP4).
-3. **Аудиодорожки и контейнеры**:
-   - Браузерный тег `<video>` нативно воспроизводит видеокодек H.264/AVC и аудиокодеки AAC/MP3. Если в раздаче MKV со звуком AC3/E-AC3 или DTS, звук на клиенте может отсутствовать без серверного транскодирования.
-
-### HLS fMP4 конвейер для реальных торрентов (iOS Safari + MKV/HEVC/AC3)
-Для полной поддержки мобильных Safari iOS и не-MP4 контейнеров (MKV с дорожками AC3/DTS/HEVC) реализован конвейер на лету:
-```
-Magnet/Torrent ──► WebTorrent (deselect: true)
-                         │
-                         ▼
-             readTorrentRangeInWindows (127.0.0.1:0 HTTP)
-                         │
-                         ▼
-             FFmpeg fMP4 HLS Worker (-c:v copy [-tag:v hvc1], -c:a aac)
-                         │
-                         ▼
-             master.m3u8 + init.mp4 + segXXXXX.m4s
-                         │
-                         ▼
-             /api/torrent/hls/[sessionId]/... (Next.js Dynamic Route)
-                         │
-                         ▼
-             TorrentPlayer.tsx (Safari AVPlayer / Hls.js)
-```
-- **Холодная перемотка**: При перемотке за пределы буфера FFmpeg перезапускается с `-ss <seconds>` без скачивания предшествующих гигабайт (чтение только Cues и нужного видеокластера).
-- **FourCC HEVC (hvc1)**: Перед запуском кодек проверяется через `ffprobe`. Для HEVC принудительно задаётся тег `hvc1`, требуемый Apple VideoToolbox.
-- **Нативный Fullscreen**: На iPhone вызывается нативный `video.webkitEnterFullscreen()`, обеспечивающий поворот экрана и скрытие адресной строки Safari.
-
+Имена ключей localStorage kinoroom: оставлены для сохранения профилей, истории и закладок при переименовании.

@@ -2,7 +2,6 @@ import { cache, fetchJSON, HOUR } from '@/lib/services/cache';
 import { openCatalog } from './catalog';
 import type { Media, MetadataProvider, MediaType, Episode, CatalogOptions } from '@/lib/types';
 
-const DEFAULT_TMDB_KEY = '844dba0bfd8f3a4f3799f6130ef9e335';
 
 type Row = {
   id: number;
@@ -25,7 +24,7 @@ type Row = {
   seasons?: { season_number: number; name: string; episode_count: number }[];
 };
 
-export const getTMDBKey = () => process.env.TMDB_API_KEY || DEFAULT_TMDB_KEY;
+export const getTMDBKey = () => process.env.TMDB_API_KEY || '';
 export const hasTMDB = () => Boolean(getTMDBKey() || process.env.TMDB_ACCESS_TOKEN);
 
 export async function tmdb<T>(path: string, params: Record<string, string> = {}): Promise<T> {

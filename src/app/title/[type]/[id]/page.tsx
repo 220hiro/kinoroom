@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, use } from 'react';
+import React, { useState, useEffect, useRef, use } from 'react';
 import {
   Star,
   Clock,
@@ -25,10 +25,8 @@ import {
 } from 'lucide-react';
 import { Media, Episode, TorrentSearchResult } from '@/lib/types';
 import { OnlinePlayer } from '@/components/player/OnlinePlayer';
-import { TorrentPlayer } from '@/components/player/TorrentPlayer';
 import { isDeclaredMp4Release } from '@/lib/playback/torrentCompatibility';
-import { KinoRoomPlayer } from '@/components/player/KinoRoomPlayer';
-import { PlaybackResponse } from '@/lib/playback/types';
+import { TorrentPlayer } from '@/components/player/TorrentPlayer';
 import {
   getActiveProfileId,
   isBookmarked,
@@ -46,6 +44,10 @@ interface TitlePageProps {
 
 export default function TitlePage({ params }: TitlePageProps) {
   const resolvedParams = use(params);
+  return <TitleContent key={`${resolvedParams.type}:${resolvedParams.id}`} resolvedParams={resolvedParams} />;
+}
+
+function TitleContent({ resolvedParams }: { resolvedParams: Awaited<TitlePageProps['params']> }) {
   const mediaType = resolvedParams.type;
   const mediaId = parseInt(resolvedParams.id, 10);
 
@@ -54,18 +56,13 @@ export default function TitlePage({ params }: TitlePageProps) {
   const [selectedSeason, setSelectedSeason] = useState(1);
   const [selectedEpisode, setSelectedEpisode] = useState(1);
 
-  // Streaming player state: 'native' is default KinoRoom AnimeOn-style player
-  const [activeTab, setActiveTab] = useState<'native' | 'torrent' | 'online'>('native');
-  const [playbackData, setPlaybackData] = useState<PlaybackResponse | null>(null);
-  const [isLoadingPlayback, setIsLoadingPlayback] = useState<boolean>(true);
-  const [playbackError, setPlaybackError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'torrent' | 'online'>('online');
+  const [torrentAvailable, setTorrentAvailable] = useState(false);
+  const playerChosen = useRef(false);
+  const chooseTab = (tab: 'torrent' | 'online') => { playerChosen.current = true; setActiveTab(tab); };
+  const selectTorrentSource = () => chooseTab('torrent');
   const [bookmarked, setBookmarked] = useState(false);
   const [isPlayerOpen, setIsPlayerOpen] = useState(false);
-
-  const isIOS = typeof window !== 'undefined' && (
-    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
-  );
 
   const isMp4Release = isDeclaredMp4Release;
 
@@ -78,6 +75,19 @@ export default function TitlePage({ params }: TitlePageProps) {
   const [searchTorrentText, setSearchTorrentText] = useState('');
 
   const [savedProgressTime, setSavedProgressTime] = useState<number | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch('/api/torrent/torrserver', { signal: controller.signal, cache: 'no-store' })
+      .then(response => response.ok ? response.json() : null)
+      .then(status => {
+        if (controller.signal.aborted) return;
+        const available = status?.playbackAvailable === true;
+        setTorrentAvailable(available);
+        if (available && !playerChosen.current) setActiveTab('torrent');
+      }).catch(() => {});
+    return () => controller.abort();
+  }, []);
 
   // Load details
   useEffect(() => {
@@ -106,48 +116,6 @@ export default function TitlePage({ params }: TitlePageProps) {
     loadData();
   }, [mediaType, mediaId, selectedSeason, selectedEpisode]);
 
-  // Playback API Stream Resolution
-  const resolvePlaybackStream = async (targetId?: string | number, translationId?: string) => {
-    if (!media && !targetId) return;
-    setIsLoadingPlayback(true);
-    setPlaybackError(null);
-    try {
-      const res = await fetch('/api/playback/resolve', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mediaId: targetId || media?.id,
-          mediaType,
-          season: mediaType === 'tv' ? selectedSeason : undefined,
-          episode: mediaType === 'tv' ? selectedEpisode : undefined,
-          translationId
-        })
-      });
-
-      const data: PlaybackResponse = await res.json();
-      if (res.ok && data.success) {
-        setPlaybackData(data);
-      } else {
-        setPlaybackData(null);
-        setPlaybackError(
-          data.error === 'SOURCE_UNAVAILABLE' || data.code === 'SOURCE_UNAVAILABLE'
-            ? 'Для данного фильма в открытом доступе пока нет подтвержденного медиапотока.'
-            : (data.error || 'Для данного тайтла пока нет подтвержденного медиапотока в открытом доступе.')
-        );
-      }
-    } catch (e: any) {
-      setPlaybackData(null);
-      setPlaybackError(e?.message || 'Ошибка подключения к Playback API');
-    } finally {
-      setIsLoadingPlayback(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!media) return;
-    resolvePlaybackStream();
-  }, [media?.id, selectedSeason, selectedEpisode]);
-
   // Fetch torrents helper
   const fetchTorrents = async (overrideQuery?: string) => {
     if (!media) return;
@@ -156,19 +124,24 @@ export default function TitlePage({ params }: TitlePageProps) {
       const q = overrideQuery !== undefined ? overrideQuery.trim() : media.title;
       const params = new URLSearchParams({
         q: q || media.title,
-        originalTitle: media.originalTitle || ''
+        title: media.title,
+        originalTitle: media.originalTitle || '',
+        type: mediaType || 'movie'
       });
+      if (media.year) {
+        params.set('year', String(media.year));
+      }
+      if (mediaType === 'tv') {
+        if (selectedSeason !== undefined) params.set('season', String(selectedSeason));
+        if (selectedEpisode !== undefined) params.set('episode', String(selectedEpisode));
+      }
+      if (media.imdbId) {
+        params.set('imdbId', media.imdbId);
+      }
       const res = await fetch(`/api/torrent/search?${params.toString()}`);
       if (res.ok) {
         const data: TorrentSearchResult[] = await res.json();
-        const isAppleDevice = typeof navigator !== 'undefined' && (
-          /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-          (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
-        );
-
-        // Always prioritize releases with the highest number of active seeders for fast buffering
-        data.sort((a, b) => b.seeds - a.seeds);
-
+        // Preserve server-side release ranking (scoring based on quality, WEB-DL/Blu-ray, audio, and seed availability)
         setTorrents(data);
         if (data.length > 0) {
           setSelectedMagnet((prev) => {
@@ -199,7 +172,7 @@ export default function TitlePage({ params }: TitlePageProps) {
 
   const handleSelectTorrent = (magnet: string) => {
     setSelectedMagnet(magnet);
-    setActiveTab('torrent');
+    selectTorrentSource();
     const el = document.getElementById('media-player-container');
     if (el) el.scrollIntoView({ behavior: 'smooth' });
   };
@@ -347,7 +320,7 @@ export default function TitlePage({ params }: TitlePageProps) {
               {savedProgressTime && savedProgressTime > 15 && (
                 <button
                   onClick={() => {
-                    setActiveTab('torrent');
+                    selectTorrentSource();
                     handleStartWatch();
                   }}
                   className="flex items-center gap-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black font-bold px-7 py-3 rounded-xl transition-all duration-300 hover:scale-105 shadow-xl shadow-amber-500/25 cursor-pointer"
@@ -396,7 +369,7 @@ export default function TitlePage({ params }: TitlePageProps) {
               {media.seasons.map((s) => (
                 <button
                   key={s.number}
-                  onClick={() => setSelectedSeason(s.number)}
+                  onClick={() => { setSelectedSeason(s.number); setSelectedEpisode(1); }}
                   className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all whitespace-nowrap cursor-pointer ${
                     selectedSeason === s.number
                       ? 'bg-red-600 text-white shadow-lg shadow-red-600/20'
@@ -435,33 +408,23 @@ export default function TitlePage({ params }: TitlePageProps) {
         <div id="media-player-container" className="mt-12 space-y-6">
           {/* Stream Type Tabs */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/10 pb-4">
-            <div className="grid grid-cols-3 gap-2 w-full sm:w-auto sm:flex sm:items-center">
+            <div className="grid grid-cols-2 gap-2 w-full sm:w-auto sm:flex sm:items-center" role="group" aria-label="Плеер">
               <button
-                onClick={() => setActiveTab('native')}
+                onClick={selectTorrentSource}
+                aria-pressed={activeTab === 'torrent'}
                 className={`flex items-center justify-center gap-2 px-3 sm:px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all cursor-pointer text-center ${
-                  activeTab === 'native'
+                  activeTab === 'torrent'
                     ? 'bg-red-600 text-white shadow-lg shadow-red-600/30'
                     : 'bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white border border-white/5'
                 }`}
               >
                 <Play className="w-3.5 h-3.5 shrink-0 fill-current" />
-                <span className="truncate">Плеер КиноРум</span>
+                <span className="truncate">Торрент-плеер</span>
               </button>
 
               <button
-                onClick={() => setActiveTab('torrent')}
-                className={`flex items-center justify-center gap-2 px-3 sm:px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all cursor-pointer text-center ${
-                  activeTab === 'torrent'
-                    ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/30'
-                    : 'bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white border border-white/5'
-                }`}
-              >
-                <Magnet className="w-3.5 h-3.5 shrink-0 text-current" />
-                <span className="truncate">Торренты</span>
-              </button>
-
-              <button
-                onClick={() => setActiveTab('online')}
+                onClick={() => chooseTab('online')}
+                aria-pressed={activeTab === 'online'}
                 className={`flex items-center justify-center gap-2 px-3 sm:px-4 py-2.5 rounded-xl font-medium text-xs sm:text-sm transition-all cursor-pointer text-center ${
                   activeTab === 'online'
                     ? 'bg-white/20 text-white shadow-lg border border-white/20'
@@ -469,101 +432,15 @@ export default function TitlePage({ params }: TitlePageProps) {
                 }`}
               >
                 <Radio className="w-3.5 h-3.5 shrink-0" />
-                <span className="truncate">Онлайн-источники</span>
+                <span className="truncate">CineSrc</span>
               </button>
             </div>
 
             <div className="text-[11px] sm:text-xs text-gray-400 text-center sm:text-right">
-              {activeTab === 'native' && 'Собственный нативный HLS-плеер КиноРум (без рекламы)'}
-              {activeTab === 'torrent' && 'Прямой торрент-стриминг (требуется TorrServer)'}
+              {activeTab === 'torrent' && 'Озвучки и субтитры из выбранной раздачи'}
               {activeTab === 'online' && 'Экспериментальный внешний источник: EmbedWave — Cinesrc'}
             </div>
           </div>
-
-          {/* 1. Native Playback Tab */}
-          {activeTab === 'native' && (
-            <div className="space-y-4">
-              {isLoadingPlayback ? (
-                <div className="w-full aspect-video min-h-[260px] bg-black/60 rounded-2xl border border-white/10 flex flex-col items-center justify-center gap-3">
-                  <div className="w-8 h-8 rounded-full border-2 border-red-500 border-t-transparent animate-spin" />
-                  <span className="text-xs text-gray-300">Поиск потока через Playback API...</span>
-                </div>
-              ) : playbackData && playbackData.success ? (
-                <div className="space-y-3">
-                  <KinoRoomPlayer
-                    key={media.id}
-                    playbackData={playbackData}
-                    initialTime={savedProgressTime ?? undefined}
-                    onTimeUpdate={handleTimeUpdate}
-                    onTranslationChange={async (translationId) => {
-                      await resolvePlaybackStream(undefined, translationId);
-                    }}
-                    onRefreshStream={() => resolvePlaybackStream()}
-                  />
-                  {(playbackData.attribution || playbackData.license) && (
-                    <div
-                      data-testid="playback-attribution"
-                      className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs text-gray-400"
-                    >
-                      <div className="flex flex-wrap items-center gap-2">
-                        {playbackData.license && (
-                          <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-semibold border border-emerald-500/30 text-[11px]">
-                            {playbackData.license}
-                          </span>
-                        )}
-                        {playbackData.attribution && (
-                          <span className="text-gray-300">
-                            {playbackData.attribution.text}
-                          </span>
-                        )}
-                      </div>
-                      {playbackData.attribution?.url && (
-                        <a
-                          href={playbackData.attribution.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-red-400 hover:text-red-300 transition-colors"
-                        >
-                          <span>Официальный сайт</span>
-                          <ExternalLink className="w-3 h-3" />
-                        </a>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="w-full aspect-video min-h-[280px] bg-[#12141f] rounded-2xl border border-white/10 flex flex-col items-center justify-center p-6 text-center space-y-4">
-                  <div className="w-12 h-12 rounded-2xl bg-red-600/10 border border-red-500/20 flex items-center justify-center text-red-400">
-                    <Play className="w-6 h-6 fill-current ml-0.5" />
-                  </div>
-                  <div className="max-w-md space-y-1">
-                    <h4 className="text-white font-bold text-sm sm:text-base">Прямой открытый медиапоток не обнаружен</h4>
-                    <p className="text-gray-400 text-xs">
-                      {playbackError || 'Для данного фильма в открытом доступе пока нет подтвержденного медиапотока без рекламы.'}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
-                    <button
-                      onClick={() => setActiveTab('online')}
-                      className="px-4 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-300 border border-red-500/30 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
-                    >
-                      <Radio className="w-3.5 h-3.5" />
-                      <span>EmbedWave — Cinesrc (Экспериментальный)</span>
-                    </button>
-                    {torrents.length > 0 && (
-                      <button
-                        onClick={() => setActiveTab('torrent')}
-                        className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
-                      >
-                        <Magnet className="w-3.5 h-3.5" />
-                        <span>Выбрать торрент ({torrents.length})</span>
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
 
           {/* Player Tab Content */}
           {activeTab === 'online' && (
@@ -579,7 +456,7 @@ export default function TitlePage({ params }: TitlePageProps) {
               />
 
               {/* Fast switch promotion if torrents are available */}
-              {torrents.length > 0 && (
+              {torrentAvailable && torrents.length > 0 && (
                 <div className="bg-gradient-to-r from-amber-500/20 via-amber-500/10 to-transparent border border-amber-500/30 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
                     <div className="p-2.5 rounded-xl bg-amber-500 text-black font-bold">
@@ -599,10 +476,10 @@ export default function TitlePage({ params }: TitlePageProps) {
                   </div>
 
                   <button
-                    onClick={() => setActiveTab('torrent')}
+                    onClick={selectTorrentSource}
                     className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs shadow-md transition-all whitespace-nowrap cursor-pointer"
                   >
-                    Перейти к Торрент-плееру ➔
+                    Открыть в плеере КАДР ➔
                   </button>
                 </div>
               )}
@@ -617,21 +494,18 @@ export default function TitlePage({ params }: TitlePageProps) {
                   key={`${selectedMagnet}-${selectedSeason}-${selectedEpisode}`}
                   magnet={selectedMagnet}
                   initialTime={savedProgressTime ?? undefined}
-                  season={selectedSeason}
-                  episode={selectedEpisode}
-                  expectedDuration={media.runtime ? media.runtime * 60 : undefined}
+                  season={mediaType === 'tv' ? selectedSeason : undefined}
+                  episode={mediaType === 'tv' ? selectedEpisode : undefined}
                   onTimeUpdate={handleTimeUpdate}
-                  onSwitchToOnline={() => setActiveTab('online')}
-                  availableTorrents={torrents}
-                  onSelectTorrent={handleSelectTorrent}
+                  onSwitchToOnline={() => chooseTab('online')}
                 />
               ) : (
                 <div className="w-full aspect-video min-h-[220px] bg-black/50 rounded-2xl border border-white/10 flex flex-col items-center justify-center p-6 text-center">
                   <Magnet className="w-12 h-12 text-amber-400 mb-3" />
                   <p className="text-gray-300 text-sm">
-                    {torrents.length > 0
-                      ? 'Выберите раздачу из списка ниже для старта потока'
-                      : 'Поиск раздач на трекерах...'}
+                    {isSearchingTorrents
+                      ? 'Поиск раздач на трекерах...'
+                      : 'Раздачи не найдены. Попробуйте другое название в поиске ниже или откройте свой magnet в торрент-разделе.'}
                   </p>
                 </div>
               )}
@@ -651,7 +525,7 @@ export default function TitlePage({ params }: TitlePageProps) {
                   </span>
                 </h3>
                 <p className="text-xs text-gray-400 mt-1">
-                  Сортировка по количеству сидов для стабильной загрузки видеопотока
+                  Раздачи отсортированы по соответствию фильму и доступности
                 </p>
               </div>
 
@@ -780,6 +654,13 @@ export default function TitlePage({ params }: TitlePageProps) {
                       {/* Left: Badges & Title */}
                       <div className="space-y-1.5 flex-grow min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
+                          {/* Tracker Origin Badge */}
+                          {t.tracker && (
+                            <span className="px-2 py-0.5 rounded-md text-xs font-semibold bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">
+                              {t.tracker}
+                            </span>
+                          )}
+
                           {/* Seed Badge */}
                           <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-xs font-black">
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -814,9 +695,12 @@ export default function TitlePage({ params }: TitlePageProps) {
 
                           {/* Translation / Voiceover Badge */}
                           {t.translation && (
-                            <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/30 text-xs font-medium">
+                            <span
+                              title="Озвучка заявлена в названии релиза (не проверена в аудиодорожках)"
+                              className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/30 text-xs font-medium"
+                            >
                               <Volume2 className="w-3 h-3" />
-                              {t.translation}
+                              Заявлено: {t.translation}
                             </span>
                           )}
 

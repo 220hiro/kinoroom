@@ -1,9 +1,12 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { usePathname } from 'next/navigation';
 import { Lock, KeyRound, AlertCircle } from 'lucide-react';
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+
   const [checking, setChecking] = useState(true);
   const [authenticated, setAuthenticated] = useState(true);
   const [password, setPassword] = useState('');
@@ -29,7 +32,8 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
       }
     }
     checkAuth();
-  }, []);
+  }, [pathname]);
+
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

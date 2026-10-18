@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { issueSession, validSession } from '@/lib/serverAuth';
 
 export async function GET(request: NextRequest) {
   const passwordRequired = Boolean(process.env.SITE_PASSWORD && process.env.SITE_PASSWORD.trim().length > 0);
@@ -7,7 +8,7 @@ export async function GET(request: NextRequest) {
   }
 
   const cookie = request.cookies.get('kinoroom_auth');
-  const authenticated = cookie?.value === 'authorized';
+  const authenticated = validSession(cookie?.value);
 
   return NextResponse.json({ authenticated, required: true });
 }
@@ -22,7 +23,7 @@ export async function POST(request: NextRequest) {
     const { password } = await request.json();
     if (password === process.env.SITE_PASSWORD) {
       const response = NextResponse.json({ success: true });
-      response.cookies.set('kinoroom_auth', 'authorized', {
+      response.cookies.set('kinoroom_auth', issueSession(), {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         sameSite: 'lax',

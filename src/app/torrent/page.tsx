@@ -119,11 +119,11 @@ export default function TorrentHubPage() {
           <span>Прямой потоковый торрент-движок</span>
         </div>
         <h1 className="text-3xl sm:text-5xl font-black text-white tracking-tight">
-          Торрент-плеер без скачивания на диск
+          Своя раздача. Свой просмотр.
         </h1>
         <p className="text-gray-400 text-sm sm:text-base mt-3">
           Вставьте любую magnet-ссылку, перетащите файл раздачи или найдите фильм в открытых базах трекеров.
-          Видео начнет воспроизводиться в плеере сразу, пока качаются нужные блоки.
+          Воспроизведение готовит внешний медиасервер. Озвучки и субтитры доступны в плеере.
         </p>
       </div>
 
@@ -270,6 +270,13 @@ export default function TorrentHubPage() {
                   {/* Left: Badges & Title */}
                   <div className="space-y-1.5 flex-grow min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
+                      {/* Tracker Origin Badge */}
+                      {t.tracker && (
+                        <span className="px-2 py-0.5 rounded-md text-xs font-semibold bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">
+                          {t.tracker}
+                        </span>
+                      )}
+
                       {/* Seed Badge */}
                       <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-xs font-black">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -297,9 +304,12 @@ export default function TorrentHubPage() {
 
                       {/* Voiceover / Translation */}
                       {t.translation && (
-                        <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/30 text-xs font-medium">
+                        <span
+                          title="Озвучка заявлена в названии релиза (не проверена в аудиодорожках)"
+                          className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/30 text-xs font-medium"
+                        >
                           <Volume2 className="w-3 h-3" />
-                          {t.translation}
+                          Заявлено: {t.translation}
                         </span>
                       )}
 

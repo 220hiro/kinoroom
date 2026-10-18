@@ -33,6 +33,7 @@ export default defineConfig({
     command: `npm run start -- --port ${testPort}`,
     url: baseURL,
     reuseExistingServer: false,
+    env: { KADR_MEDIA_ENABLED: '0', HOSTNAME: '127.0.0.1' },
     timeout: 120_000,
   },
 });

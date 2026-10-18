@@ -133,14 +133,22 @@ export type Discovery = {
 
 // Torrent streaming and search types
 export type TorrentSearchResult = {
+  id?: string;
   title: string;
   magnet: string;
   size: string;
+  sizeBytes?: number;
   seeds: number;
   peers: number;
   tracker?: string;
   quality?: string;
   translation?: string;
+  infoHash?: string;
+  sourceType?: 'magnet' | 'torrent';
+  downloadUrl?: string; // Safe relative proxy URL (e.g. /api/torrent/download?token=...), never leaks secrets
+  year?: number;
+  category?: string;
+  claimedDub?: string;
 };
 
 export type TorrentFile = {

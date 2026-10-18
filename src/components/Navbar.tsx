@@ -45,24 +45,19 @@ export function Navbar() {
 
   return (
     <header
-      className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
-        scrolled ? 'bg-[#090a0f]/95 backdrop-blur-md shadow-2xl py-3 border-b border-white/5' : 'bg-gradient-to-b from-[#090a0f] via-[#090a0f]/80 to-transparent py-5'
+      className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 safe-area-pt ${
+        scrolled ? 'bg-[#090a0f]/95 backdrop-blur-md shadow-2xl py-2.5 sm:py-3 border-b border-white/5' : 'bg-gradient-to-b from-[#090a0f] via-[#090a0f]/80 to-transparent py-3 sm:py-5'
       }`}
     >
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 flex items-center justify-between gap-2 sm:gap-4">
         {/* Brand / Logo */}
         <div className="flex items-center gap-2 sm:gap-8 shrink-0">
           <Link href="/" className="flex items-center gap-1.5 sm:gap-2 group">
-            <span className="text-xl sm:text-2xl font-black tracking-wider text-red-600 group-hover:scale-105 transition-transform">
-              КИНО<span className="text-white">РУМ</span>
-            </span>
-            <span className="text-[9px] sm:text-[10px] uppercase font-bold tracking-widest px-1 sm:px-1.5 py-0.5 rounded bg-red-600/20 text-red-400 border border-red-500/30">
-              PRO
-            </span>
+<span className="text-2xl font-black tracking-[0.18em] text-amber-300">КАДР<span className="text-amber-300">.</span></span>
           </Link>
 
           {/* Desktop Nav */}
-          <nav className="hidden md:flex items-center gap-6 text-sm font-medium">
+          <nav className="hidden xl:flex items-center gap-6 text-sm font-medium">
             <Link href="/" className="text-gray-300 hover:text-white transition-colors">
               Главная
             </Link>
@@ -81,12 +76,6 @@ export function Navbar() {
             <Link href="/bookmarks" className="flex items-center gap-1.5 text-gray-300 hover:text-white transition-colors">
               <Bookmark className="w-4 h-4" /> Закладки
             </Link>
-            <Link
-              href="/player-test"
-              className="flex items-center gap-1.5 text-emerald-400 hover:text-emerald-300 font-semibold transition-colors"
-            >
-              <Play className="w-3.5 h-3.5 fill-current" /> Тест плеера
-            </Link>
           </nav>
         </div>
 
@@ -100,7 +89,8 @@ export function Navbar() {
                 placeholder="Поиск..."
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                className="w-24 xs:w-32 sm:w-64 bg-white/5 border border-white/10 rounded-full py-1.5 pl-7 sm:pl-9 pr-3 text-xs sm:text-sm text-white placeholder-gray-400 focus:outline-none focus:border-red-500/80 focus:bg-white/10 focus:w-36 sm:focus:w-72 transition-all duration-300"
+                aria-label="Поиск фильмов и сериалов"
+                className="w-24 sm:w-48 lg:w-56 bg-white/5 border border-white/10 rounded-full py-1.5 pl-6 xs:pl-7 sm:pl-9 pr-2.5 sm:pr-3 text-xs sm:text-sm text-white placeholder-gray-400 focus:outline-none focus:border-red-500/80 focus:bg-white/10 focus:w-24 sm:focus:w-48 lg:focus:w-56 transition-all duration-300"
               />
               <Search className="w-3.5 sm:w-4 h-3.5 sm:h-4 text-gray-400 absolute left-2 sm:left-3 pointer-events-none" />
             </div>
@@ -110,11 +100,11 @@ export function Navbar() {
           <div className="relative">
             <button
               onClick={() => setIsProfileOpen(!isProfileOpen)}
-              className="flex items-center gap-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-full px-2 sm:px-3 py-1.5 text-xs text-white transition-all cursor-pointer"
+              aria-label="Сменить профиль"
+              className="flex items-center gap-1 sm:gap-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-full px-2 sm:px-3 py-1.5 text-xs text-white transition-all cursor-pointer min-h-[44px]"
             >
               <span className="text-sm sm:text-base">{activeProfile?.avatar || '🎬'}</span>
               <span className="font-medium hidden sm:inline">{activeProfile?.name || 'Профиль'}</span>
-              <ChevronDown className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-gray-400" />
             </button>
 
             {isProfileOpen && (
